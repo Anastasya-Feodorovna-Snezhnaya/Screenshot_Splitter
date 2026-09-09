@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QPen, QPalette, QGuiApplication, QWheelEvent, QMouseEvent, QPaintEvent
 from PySide6.QtWidgets import QAbstractScrollArea, QWidget
 
@@ -15,9 +15,6 @@ class _CanvasViewport(QWidget):
         self.canvas = canvas
         self.setMouseTracking(True)
         self.setAutoFillBackground(False)
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        self.canvas._paint_viewport(event, self)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         self.canvas._handle_wheel_event(event)
@@ -60,6 +57,7 @@ class ImageCanvas(QAbstractScrollArea):
         self._line_drag_index: Optional[int] = None
         self._line_drag_old_y: Optional[int] = None
         self._selected_line: Optional[int] = None
+        self._paint_diagnostic_pending = False
 
     def _logger(self):
         return getattr(self.window(), "logger", None)
@@ -98,6 +96,8 @@ class ImageCanvas(QAbstractScrollArea):
         self._line_drag_old_y = None
         self._update_scrollbars()
         self.center_image()
+        self._paint_diagnostic_pending = True
+        self.update()
         self.viewport().update()
         self._log_state("canvas_document_set", {
             "image_size": [image.width(), image.height()],
@@ -107,6 +107,7 @@ class ImageCanvas(QAbstractScrollArea):
 
     def set_mask_opacity(self, opacity: int) -> None:
         self.mask_opacity = max(0, min(100, int(opacity)))
+        self.update()
         self.viewport().update()
 
     def image_point(self, pos: QPointF) -> QPointF:
@@ -140,6 +141,7 @@ class ImageCanvas(QAbstractScrollArea):
         height = round(self._image.height() * self.zoom)
         self.horizontalScrollBar().setValue(round((width - self.viewport().width()) / 2))
         self.verticalScrollBar().setValue(round((height - self.viewport().height()) / 2))
+        self.update()
         self.viewport().update()
 
     def resizeEvent(self, event) -> None:
@@ -149,6 +151,7 @@ class ImageCanvas(QAbstractScrollArea):
         self.horizontalScrollBar().setValue(old_h)
         self.verticalScrollBar().setValue(old_v)
         super().resizeEvent(event)
+        self.update()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         self._handle_wheel_event(event)
@@ -188,6 +191,7 @@ class ImageCanvas(QAbstractScrollArea):
             else:
                 self._selected_line = None
                 self._start_pan(event)
+            self.update()
             self.viewport().update()
             event.accept()
             return
@@ -208,6 +212,7 @@ class ImageCanvas(QAbstractScrollArea):
             self.verticalScrollBar().setValue(before[1] - round(delta.y()))
             after = [self.horizontalScrollBar().value(), self.verticalScrollBar().value()]
             self._pan_last = event.position()
+            self.update()
             self.viewport().update()
             self._log_interaction("pan_move", event, delta=[delta.x(), delta.y()], scroll_before=before, scroll_after=after)
             event.accept()
@@ -275,6 +280,7 @@ class ImageCanvas(QAbstractScrollArea):
             self._state.split_lines.append(SplitLine(y))
             self._state.split_lines.sort(key=lambda item: item.y)
             self.splitLineCreated.emit(y)
+            self.update()
             self.viewport().update()
 
     def delete_selected_line(self) -> None:
@@ -287,6 +293,7 @@ class ImageCanvas(QAbstractScrollArea):
         self._state.split_lines = [line for line in self._state.split_lines if line.y != y]
         self._selected_line = None
         self.splitLineDeleted.emit(y)
+        self.update()
         self.viewport().update()
 
     def move_selected_line(self, delta: int) -> None:
@@ -315,6 +322,7 @@ class ImageCanvas(QAbstractScrollArea):
         self._state.split_lines.sort(key=lambda item: item.y)
         self._selected_line = self._state.normalized_lines().index(new_y)
         self.splitLineMoved.emit(old_y, new_y)
+        self.update()
         self.viewport().update()
 
     def _set_zoom(self, zoom: float, viewport_anchor: QPointF, image_anchor: QPointF) -> None:
@@ -327,6 +335,7 @@ class ImageCanvas(QAbstractScrollArea):
         self._update_scrollbars()
         self.horizontalScrollBar().setValue(round(image_anchor.x() * self.zoom - viewport_anchor.x()))
         self.verticalScrollBar().setValue(round(image_anchor.y() * self.zoom - viewport_anchor.y()))
+        self.update()
         self.viewport().update()
         self.zoomChanged.emit(self.zoom)
 
@@ -342,6 +351,13 @@ class ImageCanvas(QAbstractScrollArea):
         self.zoom = max(0.05, min(1.0, min(zx, zy)))
         self._update_scrollbars()
         self.center_image()
+        self.zoomChanged.emit(self.zoom)
+
+    def viewportEvent(self, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Paint:
+            self._paint_viewport(event, self.viewport())
+            return True
+        return super().viewportEvent(event)
 
     def _paint_viewport(self, event: QPaintEvent, viewport: QWidget) -> None:
         painter = QPainter(viewport)
@@ -365,8 +381,9 @@ class ImageCanvas(QAbstractScrollArea):
             left = -self.horizontalScrollBar().value()
             top = -self.verticalScrollBar().value()
             target = self._image.rect()
-            target.setSize(target.size().scaled(image_width, image_height, Qt.AspectRatioMode.IgnoreAspectRatio))
-            target.moveTo(left, top)
+            target.setWidth(image_width)
+            target.setHeight(image_height)
+            target.translate(left, top)
             painter.drawImage(target, self._image)
 
             if self.mask_opacity > 0:
@@ -382,5 +399,15 @@ class ImageCanvas(QAbstractScrollArea):
                 screen_y = round(y * self.zoom) + top
                 painter.setPen(QPen(self.palette().highlight(), 2 if i == self._selected_line else 1))
                 painter.drawLine(left, screen_y, left + image_width, screen_y)
+
+            if self._paint_diagnostic_pending:
+                self._paint_diagnostic_pending = False
+                self._log_state("canvas_painted", {
+                    "image_size": [self._image.width(), self._image.height()],
+                    "viewport_size": [viewport.width(), viewport.height()],
+                    "zoom": self.zoom,
+                    "scroll": [self.horizontalScrollBar().value(), self.verticalScrollBar().value()],
+                    "target": [target.x(), target.y(), target.width(), target.height()],
+                })
         finally:
             painter.end()
