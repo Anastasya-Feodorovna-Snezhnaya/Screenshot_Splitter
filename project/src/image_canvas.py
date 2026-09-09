@@ -133,9 +133,16 @@ class ImageCanvas(QAbstractScrollArea):
         # keyboardModifiers() 作为 Windows 下的补充读取。
         modifiers = event.modifiers() | QGuiApplication.keyboardModifiers()
         if modifiers & Qt.KeyboardModifier.AltModifier:
+            # 在部分 Windows/Qt 输入路径中，Alt+滚轮会以水平 angleDelta
+            # （x 分量）上报，而不是通常的垂直 angleDelta（y 分量）。
+            # 对缩放而言两者都表示滚轮步进，因此 y 不存在时回退到 x。
             delta = event.angleDelta().y()
             if delta == 0:
+                delta = event.angleDelta().x()
+            if delta == 0:
                 delta = event.pixelDelta().y()
+            if delta == 0:
+                delta = event.pixelDelta().x()
 
             if delta != 0:
                 viewport_anchor = QPointF(event.position())
