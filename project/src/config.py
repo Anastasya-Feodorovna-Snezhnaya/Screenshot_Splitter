@@ -19,7 +19,7 @@ class ShortcutConfig:
     move_line_up_fast: str = "SHIFT+UP"
     move_line_down_fast: str = "SHIFT+DOWN"
     fit_window: str = "F"
-    zoom_100: str = "1"
+    zoom_100: str = "Y"
 
 
 @dataclass
@@ -27,6 +27,17 @@ class PreviewConfig:
     """预览层的显示配置。"""
 
     mask_opacity: int = 55
+
+
+@dataclass
+class WindowConfig:
+    """主窗口关闭时保存的窗口状态。"""
+
+    fullscreen: bool = False
+    x: int = -1
+    y: int = -1
+    width: int = 1200
+    height: int = 800
 
 
 class ConfigManager:
@@ -37,6 +48,7 @@ class ConfigManager:
         self.path = self.base_dir / "settings.json"
         self.shortcuts = ShortcutConfig()
         self.preview = PreviewConfig()
+        self.window = WindowConfig()
 
     def load(self) -> None:
         if not self.path.exists():
@@ -54,16 +66,26 @@ class ConfigManager:
             opacity = preview_data.get("mask_opacity", self.preview.mask_opacity)
             if isinstance(opacity, int) and 0 <= opacity <= 100:
                 self.preview.mask_opacity = opacity
+
+            window_data = data.get("window", {})
+            if isinstance(window_data.get("fullscreen"), bool):
+                self.window.fullscreen = window_data["fullscreen"]
+            for key in ("x", "y", "width", "height"):
+                value = window_data.get(key)
+                if isinstance(value, int):
+                    setattr(self.window, key, value)
         except (OSError, ValueError, TypeError):
             # 配置文件无效时恢复默认配置，不阻止程序启动。
             self.shortcuts = ShortcutConfig()
             self.preview = PreviewConfig()
+            self.window = WindowConfig()
 
     def save(self) -> None:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         data = {
             "shortcuts": asdict(self.shortcuts),
             "preview": asdict(self.preview),
+            "window": asdict(self.window),
         }
         self.path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
