@@ -31,8 +31,7 @@ class MainWindow(QMainWindow):
         self.config = config
         self.state = DocumentState()
         self.source_image = QImage()
-        self._fit_shortcut: QShortcut | None = None
-        self._toggle_region_shortcut: QShortcut | None = None
+        self._shortcuts: dict[str, QShortcut] = {}
 
         self.setWindowTitle("Screenshot Splitter")
         self.resize(1200, 800)
@@ -187,41 +186,34 @@ class MainWindow(QMainWindow):
         )
         self.status.setText(text)
 
-    def keyPressEvent(self, event) -> None:
-        key = self._shortcut_text(event)
-        shortcuts = self.config.shortcuts
-        if key == shortcuts.fit_window:
-            self._fit_window()
-            event.accept()
-            return
-        if key == shortcuts.zoom_100:
-            self._original_size()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    @staticmethod
-    def _shortcut_text(event) -> str:
-        sequence = QKeySequence(event.modifiers() | event.key())
-        return sequence.toString(QKeySequence.SequenceFormat.NativeText).upper().replace(" ", "")
-
     def edit_shortcuts(self) -> None:
         dialog = ShortcutEditDialog(self.config, self)
         if dialog.exec():
             self._refresh_shortcuts()
 
     def _refresh_shortcuts(self) -> None:
-        if self._fit_shortcut is not None:
-            self._fit_shortcut.deleteLater()
-        self._fit_shortcut = QShortcut(QKeySequence(self.config.shortcuts.fit_window), self)
-        self._fit_shortcut.activated.connect(self._fit_window)
+        for shortcut in self._shortcuts.values():
+            shortcut.deleteLater()
+        self._shortcuts.clear()
 
-        if self._toggle_region_shortcut is not None:
-            self._toggle_region_shortcut.deleteLater()
-        self._toggle_region_shortcut = QShortcut(QKeySequence(self.config.shortcuts.toggle_region), self)
-        self._toggle_region_shortcut.activated.connect(self._toggle_region)
+        # 所有可配置快捷键统一使用 QShortcut 注册，而不是依赖某个窗口的
+        # keyPressEvent。这样快捷键焦点位于画布、工具栏或输入控件附近时，
+        # 行为仍保持一致。
+        handlers = {
+            "fit_window": self._fit_window,
+            "zoom_100": self._original_size,
+            "toggle_region": self._toggle_region,
+        }
+        for name, handler in handlers.items():
+            value = getattr(self.config.shortcuts, name).strip()
+            if not value:
+                continue
+            shortcut = QShortcut(QKeySequence(value), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(handler)
+            self._shortcuts[name] = shortcut
 
-        value = self.config.shortcuts.add_split_line
+        value = self.config.shortcuts.add_split_line.strip().upper()
         key_map = {
             "S": Qt.Key.Key_S,
             "A": Qt.Key.Key_A,
