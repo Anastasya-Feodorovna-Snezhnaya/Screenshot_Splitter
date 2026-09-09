@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QInputDialog,
+    QLineEdit,
 )
 
 from .config import ConfigManager
@@ -118,17 +119,33 @@ class MainWindow(QMainWindow):
         self._refresh_status("已恢复原始尺寸")
 
     def edit_mask_opacity(self) -> None:
-        value, accepted = QInputDialog.getInt(
-            self,
-            "遮罩设置",
-            "遮罩透明度（0% = 完全透明，100% = 完全不透明）：",
-            self.config.preview.mask_opacity,
-            0,
-            100,
-            5,
-        )
-        if not accepted:
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("遮罩设置")
+        dialog.setLabelText("遮罩透明度（输入 0-100，可不输入 %）：")
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        dialog.setTextValue(str(self.config.preview.mask_opacity))
+        dialog.setOkButtonText("确定")
+        dialog.setCancelButtonText("取消")
+
+        line_edit = dialog.findChild(QLineEdit)
+        if line_edit is not None:
+            line_edit.setInputMethodHints(Qt.InputMethodHint.ImhDigitsOnly)
+            line_edit.setPlaceholderText("例如：55 或 55%")
+
+        if dialog.exec() != QInputDialog.DialogCode.Accepted:
             return
+
+        text = dialog.textValue().strip().replace("%", "")
+        try:
+            value = int(text)
+        except ValueError:
+            QMessageBox.warning(self, "输入无效", "请输入 0 到 100 之间的整数。")
+            return
+
+        if not 0 <= value <= 100:
+            QMessageBox.warning(self, "输入无效", "请输入 0 到 100 之间的整数。")
+            return
+
         self.config.preview.mask_opacity = value
         self.config.save()
         self.canvas.set_mask_opacity(value)
