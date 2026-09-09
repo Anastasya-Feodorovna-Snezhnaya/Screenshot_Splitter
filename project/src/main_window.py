@@ -53,7 +53,7 @@ class MainWindow(QMainWindow):
             "selected_region": self.canvas._selected_region,
             "selected_line": self.canvas._selected_line,
             "split_lines": self.state.normalized_lines(),
-            "deleted_regions": sorted(self.state.deleted_regions),
+            "deleted_regions": [list(item) for item in sorted(self.state.deleted_regions)],
             "regions": [{"top": r.top, "bottom": r.bottom, "keep": r.keep} for r in regions],
             "mask_opacity": self.canvas.mask_opacity,
         })
@@ -92,9 +92,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.canvas.regionSelected.connect(self._on_region_selected)
         self.canvas.splitLineSelected.connect(self._on_line_selected)
-        self.canvas.splitLineCreated.connect(lambda _y: self._refresh_status())
-        self.canvas.splitLineMoved.connect(lambda _a, _b: self._refresh_status())
-        self.canvas.splitLineDeleted.connect(lambda _y: self._refresh_status())
+        self.canvas.splitLineCreated.connect(self._on_split_line_created)
+        self.canvas.splitLineMoved.connect(self._on_split_line_moved)
+        self.canvas.splitLineDeleted.connect(self._on_split_line_deleted)
 
     def open_image(self) -> None:
         self._log_api("open_image.begin")
@@ -171,13 +171,18 @@ class MainWindow(QMainWindow):
         if index is None or not (0 <= index < len(regions)):
             self._log_api("toggle_region.ignored", {"reason": "no_selected_region"})
             return
-        if index in self.state.deleted_regions:
-            self.state.deleted_regions.remove(index)
+
+        region = regions[index]
+        key = (region.top, region.bottom)
+        if key in self.state.deleted_regions:
+            self.state.deleted_regions.remove(key)
+            keep = True
         else:
-            self.state.deleted_regions.add(index)
+            self.state.deleted_regions.add(key)
+            keep = False
         self.canvas.viewport().update()
-        self._refresh_status(f"区域 {index + 1}：{'保留' if index not in self.state.deleted_regions else '删除'}")
-        self._log_api("toggle_region.end", {"region": index, "keep": index not in self.state.deleted_regions})
+        self._refresh_status(f"区域 {index + 1}：{'保留' if keep else '删除'}")
+        self._log_api("toggle_region.end", {"region": index, "bounds": list(key), "keep": keep})
         self._log_state("region_toggled")
 
     def _on_region_selected(self, index: int) -> None:
@@ -191,6 +196,27 @@ class MainWindow(QMainWindow):
             self._refresh_status(f"选中分割线：Y={lines[index]} px")
             self._log_api("split_line_selected", {"index": index, "y": lines[index]})
             self._log_state("split_line_selected")
+
+    def _on_split_line_created(self, y: int) -> None:
+        # 新增内部边界不会影响已有区域的删除状态；边界记录保持在原有上下界上。
+        self.state.discard_invalid_deleted_regions()
+        self._refresh_status()
+        self._log_api("split_line_created", {"y": y})
+        self._log_state("split_line_created")
+
+    def _on_split_line_moved(self, old_y: int, new_y: int) -> None:
+        self.state.update_deleted_region_boundary(old_y, new_y)
+        self.state.discard_invalid_deleted_regions()
+        self._refresh_status()
+        self._log_api("split_line_moved", {"old_y": old_y, "new_y": new_y})
+        self._log_state("split_line_moved")
+
+    def _on_split_line_deleted(self, y: int) -> None:
+        # 删除边界后，所有不再对应实际区域的删除状态自动失效。
+        self.state.discard_invalid_deleted_regions()
+        self._refresh_status()
+        self._log_api("split_line_deleted", {"y": y})
+        self._log_state("split_line_deleted")
 
     def _refresh_status(self, prefix: str | None = None) -> None:
         regions = self.state.regions()
