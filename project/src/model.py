@@ -5,14 +5,14 @@ from dataclasses import dataclass, field
 
 @dataclass
 class SplitLine:
-    """A horizontal split line stored in original-image Y coordinates."""
+    """表示一条使用原图 Y 坐标保存的水平分割线。"""
 
     y: int
 
 
 @dataclass
 class Region:
-    """A region between two split lines."""
+    """表示两条相邻分割线之间的图片区域。"""
 
     top: int
     bottom: int
@@ -25,7 +25,7 @@ class Region:
 
 @dataclass
 class DocumentState:
-    """Editable state independent from the preview viewport."""
+    """保存与预览视图无关的可编辑文档状态。"""
 
     image_path: str = ""
     image_width: int = 0
