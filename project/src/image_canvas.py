@@ -13,6 +13,7 @@ class _CanvasViewport(QWidget):
     def __init__(self, canvas: "ImageCanvas") -> None:
         super().__init__(canvas)
         self.canvas = canvas
+        self.setMouseTracking(True)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         self.canvas._handle_wheel_event(event)
@@ -160,6 +161,7 @@ class ImageCanvas(QAbstractScrollArea):
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(delta.x()))
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - round(delta.y()))
             self._pan_last = event.position()
+            self.viewport().update()
             event.accept()
             return
         event.ignore()
@@ -184,12 +186,12 @@ class ImageCanvas(QAbstractScrollArea):
         self._pan_active = True
         self._pan_button = event.button()
         self._pan_last = event.position()
-        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
 
     def _stop_pan(self) -> None:
         self._pan_active = False
         self._pan_button = None
-        self.unsetCursor()
+        self.viewport().unsetCursor()
 
     def _hit_line(self, y: float) -> Optional[int]:
         if not self._state:
