@@ -46,6 +46,7 @@ class ImageCanvas(QAbstractScrollArea):
         self._selected_line = None
         self._selected_region = None
         self._update_scrollbars()
+        self.center_image()
         self.viewport().update()
 
     def set_add_line_shortcut(self, key: Qt.Key, modifier: Qt.KeyboardModifier) -> None:
@@ -66,17 +67,41 @@ class ImageCanvas(QAbstractScrollArea):
             self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             return
+
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
         width = max(1, round(self._image.width() * self.zoom))
         height = max(1, round(self._image.height() * self.zoom))
-        self.horizontalScrollBar().setRange(0, max(0, width - self.viewport().width()))
-        self.verticalScrollBar().setRange(0, max(0, height - self.viewport().height()))
+
+        # 保留半个视口作为平移余量，使图片即使小于窗口也可以左右/上下移动。
+        half_w = self.viewport().width() // 2
+        half_h = self.viewport().height() // 2
+        self.horizontalScrollBar().setRange(-half_w, max(-half_w, width - half_w))
+        self.verticalScrollBar().setRange(-half_h, max(-half_h, height - half_h))
         self.horizontalScrollBar().setPageStep(self.viewport().width())
         self.verticalScrollBar().setPageStep(self.viewport().height())
 
+    def center_image(self) -> None:
+        """将图片整体居中显示。"""
+        if not self._image:
+            return
+        width = round(self._image.width() * self.zoom)
+        height = round(self._image.height() * self.zoom)
+        self.horizontalScrollBar().setValue(
+            round((width - self.viewport().width()) / 2)
+        )
+        self.verticalScrollBar().setValue(
+            round((height - self.viewport().height()) / 2)
+        )
+        self.viewport().update()
+
     def resizeEvent(self, event) -> None:
+        old_h = self.horizontalScrollBar().value()
+        old_v = self.verticalScrollBar().value()
         self._update_scrollbars()
+        self.horizontalScrollBar().setValue(old_h)
+        self.verticalScrollBar().setValue(old_v)
         super().resizeEvent(event)
 
     def eventFilter(self, watched, event) -> bool:
@@ -136,7 +161,6 @@ class ImageCanvas(QAbstractScrollArea):
                 self._selected_region = self._region_at_y(int(image_y))
                 if self._selected_region is not None:
                     self.regionSelected.emit(self._selected_region)
-                # 左键按住拖动图片；单击本身仍然完成区域选择。
                 self._start_pan(event)
             self.viewport().update()
             event.accept()
@@ -156,7 +180,6 @@ class ImageCanvas(QAbstractScrollArea):
 
         if self._pan_active:
             delta = event.position() - self._pan_last
-            # 滚动条向鼠标移动的反方向移动，从而产生直接拖动画布的效果。
             self.horizontalScrollBar().setValue(
                 self.horizontalScrollBar().value() - round(delta.x())
             )
@@ -298,8 +321,8 @@ class ImageCanvas(QAbstractScrollArea):
         self._update_scrollbars()
         target_x = round(image_anchor.x() * zoom - viewport_anchor.x())
         target_y = round(image_anchor.y() * zoom - viewport_anchor.y())
-        self.horizontalScrollBar().setValue(max(0, target_x))
-        self.verticalScrollBar().setValue(max(0, target_y))
+        self.horizontalScrollBar().setValue(target_x)
+        self.verticalScrollBar().setValue(target_y)
         self.viewport().update()
 
     def set_zoom(self, zoom: float) -> None:
@@ -316,9 +339,7 @@ class ImageCanvas(QAbstractScrollArea):
         zy = self.viewport().height() / self._image.height()
         self.zoom = max(0.05, min(1.0, min(zx, zy)))
         self._update_scrollbars()
-        self.horizontalScrollBar().setValue(0)
-        self.verticalScrollBar().setValue(0)
-        self.viewport().update()
+        self.center_image()
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self.viewport())
