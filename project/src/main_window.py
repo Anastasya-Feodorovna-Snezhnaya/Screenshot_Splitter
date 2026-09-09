@@ -129,17 +129,18 @@ class MainWindow(QMainWindow):
 
         line_edit = dialog.findChild(QLineEdit)
         if line_edit is not None:
-            line_edit.setInputMethodHints(Qt.InputMethodHint.ImhDigitsOnly)
             line_edit.setPlaceholderText("例如：55 或 55%")
 
         if dialog.exec() != QInputDialog.DialogCode.Accepted:
             return
 
-        text = dialog.textValue().strip().replace("%", "")
+        text = dialog.textValue().strip()
+        if text.endswith("%"):
+            text = text[:-1].strip()
         try:
             value = int(text)
         except ValueError:
-            QMessageBox.warning(self, "输入无效", "请输入 0 到 100 之间的整数。")
+            QMessageBox.warning(self, "输入无效", "请输入 0 到 100 之间的整数，可带 %。")
             return
 
         if not 0 <= value <= 100:
