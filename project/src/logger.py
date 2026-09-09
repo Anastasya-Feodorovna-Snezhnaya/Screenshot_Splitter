@@ -92,8 +92,10 @@ class DebugLogger:
         app.installEventFilter(self._event_filter)
 
     def set_startup_shortcuts(self, shortcuts: dict[str, str]) -> None:
-        """记录程序启动时的完整快捷键配置快照。"""
-        self.state("startup_shortcuts", {"shortcuts": dict(shortcuts)})
+        """记录程序启动时的完整快捷键配置快照。该记录独立于日志分类开关。"""
+        if not self.enabled:
+            return
+        self.write("config", "startup_shortcuts", {"shortcuts": dict(shortcuts)})
 
     def close(self) -> None:
         if self._event_filter is not None:
