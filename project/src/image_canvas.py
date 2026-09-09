@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QEvent, QPointF, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QPen, QPalette
+from PySide6.QtGui import QImage, QPainter, QPen, QPalette, QGuiApplication
 from PySide6.QtWidgets import QAbstractScrollArea
 
 from .model import DocumentState, SplitLine
@@ -120,12 +120,13 @@ class ImageCanvas(QAbstractScrollArea):
         if not self._image:
             return False
 
-        delta = event.angleDelta().y()
-        if delta == 0:
-            delta = event.pixelDelta().y()
-
-        # Alt+滚轮直接改变预览缩放比例，并以鼠标位置为缩放锚点。
-        if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+        # QAbstractScrollArea 的默认滚轮行为会用于滚动视口。这里完全接管滚轮，
+        # 只保留 Alt+滚轮缩放；普通滚轮不再移动图片，避免与缩放逻辑发生耦合。
+        modifiers = event.modifiers() | QGuiApplication.keyboardModifiers()
+        if modifiers & Qt.KeyboardModifier.AltModifier:
+            delta = event.angleDelta().y()
+            if delta == 0:
+                delta = event.pixelDelta().y()
             if delta != 0:
                 anchor = QPointF(event.position())
                 image_anchor = self.image_point(anchor)
@@ -134,9 +135,6 @@ class ImageCanvas(QAbstractScrollArea):
             event.accept()
             return True
 
-        scroll_delta = event.angleDelta()
-        self.verticalScrollBar().setValue(self.verticalScrollBar().value() - scroll_delta.y())
-        self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - scroll_delta.x())
         event.accept()
         return True
 
@@ -303,8 +301,6 @@ class ImageCanvas(QAbstractScrollArea):
             return
         self.zoom = new_zoom
         self._update_scrollbars()
-
-        # 根据缩放前记录的原图锚点重新计算滚动位置，保证锚点仍位于鼠标下方。
         target_x = round(image_anchor.x() * self.zoom - viewport_anchor.x())
         target_y = round(image_anchor.y() * self.zoom - viewport_anchor.y())
         self.horizontalScrollBar().setValue(target_x)
