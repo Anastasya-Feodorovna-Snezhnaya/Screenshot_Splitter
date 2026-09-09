@@ -83,6 +83,11 @@ class ImageCanvas(QAbstractScrollArea):
         })
         logger.interaction(name, data)
 
+    def _log_state(self, name: str, data: Optional[dict] = None) -> None:
+        logger = self._logger()
+        if logger is not None and logger.state_enabled:
+            logger.state(name, data or {})
+
     def set_document(self, image: QImage, state: DocumentState) -> None:
         self._stop_pan()
         self._image = image
@@ -94,6 +99,11 @@ class ImageCanvas(QAbstractScrollArea):
         self._update_scrollbars()
         self.center_image()
         self.viewport().update()
+        self._log_state("canvas_document_set", {
+            "image_size": [image.width(), image.height()],
+            "viewport_size": [self.viewport().width(), self.viewport().height()],
+            "zoom": self.zoom,
+        })
 
     def set_mask_opacity(self, opacity: int) -> None:
         self.mask_opacity = max(0, min(100, int(opacity)))
@@ -144,7 +154,7 @@ class ImageCanvas(QAbstractScrollArea):
         self._handle_wheel_event(event)
 
     def _handle_wheel_event(self, event: QWheelEvent) -> None:
-        """Alt+滚轮缩放；普通滚轮交给滚动区域处理。"""
+        """Alt+滚轮缩放；普通滚轮交给 QAbstractScrollArea。"""
         if not self._image:
             event.ignore()
             return
@@ -336,21 +346,24 @@ class ImageCanvas(QAbstractScrollArea):
     def _paint_viewport(self, event: QPaintEvent, viewport: QWidget) -> None:
         painter = QPainter(viewport)
         if not painter.isActive():
-            logger = self._logger()
-            if logger is not None and logger.state_enabled:
-                logger.state("canvas_paint_failed", {"reason": "painter_inactive"})
+            self._log_state("canvas_paint_failed", {"reason": "painter_inactive"})
             return
         try:
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.setClipRect(event.rect())
             painter.fillRect(event.rect(), self.palette().dark())
-            if not self._image or not self._state:
+            if self._image is None or self._image.isNull() or self._state is None:
+                self._log_state("canvas_paint_skipped", {
+                    "has_image": self._image is not None,
+                    "image_null": self._image.isNull() if self._image is not None else True,
+                    "has_state": self._state is not None,
+                })
                 return
 
-            image_width = round(self._image.width() * self.zoom)
-            image_height = round(self._image.height() * self.zoom)
+            image_width = max(1, round(self._image.width() * self.zoom))
+            image_height = max(1, round(self._image.height() * self.zoom))
             left = -self.horizontalScrollBar().value()
             top = -self.verticalScrollBar().value()
-
             target = self._image.rect()
             target.setSize(target.size().scaled(image_width, image_height, Qt.AspectRatioMode.IgnoreAspectRatio))
             target.moveTo(left, top)
