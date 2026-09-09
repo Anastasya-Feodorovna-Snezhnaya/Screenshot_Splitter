@@ -4,9 +4,9 @@ from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QRect
-from PySide6.QtGui import QAction, QGuiApplication, QImage, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QCursor, QGuiApplication, QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout,
+    QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout,
     QWidget, QInputDialog, QLineEdit,
 )
 
@@ -204,7 +204,9 @@ class MainWindow(QMainWindow):
         """Space 触发时只读取一次当前鼠标位置，不追踪鼠标移动。"""
         if not self.state.image_path:
             return
-        global_pos = QGuiApplication.cursor().pos()
+        if QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+            return
+        global_pos = QCursor.pos()
         viewport_pos = self.canvas.viewport().mapFromGlobal(global_pos)
         if not self.canvas.viewport().rect().contains(viewport_pos):
             return
@@ -273,9 +275,18 @@ class MainWindow(QMainWindow):
         self._history_index += 1
 
     def _apply_history_snapshot(self, snapshot: DocumentState) -> None:
+        zoom = self.canvas.zoom
+        horizontal = self.canvas.horizontalScrollBar().value()
+        vertical = self.canvas.verticalScrollBar().value()
+        selected_line = self.canvas._selected_line
         self.state = deepcopy(snapshot)
         self.canvas.set_document(self.source_image, self.state)
-        self.canvas.fit_to_window()
+        self.canvas.zoom = zoom
+        self.canvas._update_scrollbars()
+        self.canvas.horizontalScrollBar().setValue(horizontal)
+        self.canvas.verticalScrollBar().setValue(vertical)
+        lines = self.state.normalized_lines()
+        self.canvas._selected_line = selected_line if selected_line is not None and selected_line < len(lines) else None
         self.canvas.viewport().update()
 
     def _undo(self) -> None:
@@ -336,7 +347,7 @@ class MainWindow(QMainWindow):
     def _add_split_line_at_cursor(self) -> None:
         if not self.state.image_path:
             return
-        global_pos = QGuiApplication.cursor().pos()
+        global_pos = QCursor.pos()
         pos = self.canvas.viewport().mapFromGlobal(global_pos)
         if not self.canvas.viewport().rect().contains(pos):
             return
@@ -346,7 +357,13 @@ class MainWindow(QMainWindow):
         self.canvas.delete_selected_line()
 
     def _move_selected_line(self, delta: int) -> None:
+        if not self.state.image_path or self.canvas._selected_line is None:
+            return
+        before = self._clone_state()
         self.canvas.move_selected_line(delta)
+        if self.state != before:
+            self._record_history()
+            self._log_state("split_line_moved_by_shortcut")
 
     def export_all(self) -> None:
         if not self.state.image_path:

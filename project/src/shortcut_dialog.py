@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import fields
 
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox,
-    QVBoxLayout
+    QVBoxLayout,
 )
 
 from .config import ConfigManager, ShortcutConfig
@@ -40,13 +41,13 @@ class ShortcutEditDialog(QDialog):
         for field in fields(ShortcutConfig):
             key = field.name
             edit = QLineEdit(getattr(config.shortcuts, key))
-            edit.setPlaceholderText("例如 Ctrl+Z、Space、S")
+            edit.setPlaceholderText("例如 Ctrl+Z、Space、S；留空表示禁用")
             self.edits[key] = edit
             form.addRow(DISPLAY_NAMES.get(key, key), edit)
 
         note = QLabel(
-            "可直接输入 Qt 支持的快捷键文本。保存前会检查重复绑定。"
-            "当前未实现的快捷键会保存配置，但暂不产生对应操作。"
+            "保存前会检查快捷键格式和重复绑定。留空可禁用对应快捷键；"
+            "保存失败时会保留原配置。"
         )
         note.setWordWrap(True)
 
@@ -62,13 +63,43 @@ class ShortcutEditDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
-    def _save(self) -> None:
-        values = {key: edit.text().strip().upper() for key, edit in self.edits.items()}
-        values = {key: value for key, value in values.items() if value}
+    @staticmethod
+    def _normalize(value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        sequence = QKeySequence.fromString(value, QKeySequence.SequenceFormat.PortableText)
+        if sequence.isEmpty():
+            return ""
+        return sequence.toString(QKeySequence.SequenceFormat.PortableText).upper()
 
-        duplicates = {}
+    def _save(self) -> None:
+        values: dict[str, str] = {}
+        invalid: list[str] = []
+        for field in fields(ShortcutConfig):
+            key = field.name
+            raw = self.edits[key].text().strip()
+            if not raw:
+                values[key] = ""
+                continue
+            normalized = self._normalize(raw)
+            if not normalized:
+                invalid.append(f"{DISPLAY_NAMES.get(key, key)}：{raw}")
+            else:
+                values[key] = normalized
+
+        if invalid:
+            QMessageBox.warning(
+                self,
+                "快捷键无效",
+                "以下快捷键无法解析：\n" + "\n".join(invalid),
+            )
+            return
+
+        duplicates: dict[str, list[str]] = {}
         for key, value in values.items():
-            duplicates.setdefault(value, []).append(key)
+            if value:
+                duplicates.setdefault(value, []).append(key)
         duplicate_values = [value for value, keys in duplicates.items() if len(keys) > 1]
         if duplicate_values:
             QMessageBox.warning(
@@ -78,7 +109,14 @@ class ShortcutEditDialog(QDialog):
             )
             return
 
+        old_values = {field.name: getattr(self.config.shortcuts, field.name) for field in fields(ShortcutConfig)}
         for key, value in values.items():
             setattr(self.config.shortcuts, key, value)
-        self.config.save()
+        try:
+            self.config.save()
+        except OSError as exc:
+            for key, value in old_values.items():
+                setattr(self.config.shortcuts, key, value)
+            QMessageBox.critical(self, "保存失败", f"无法保存快捷键配置：{exc}")
+            return
         self.accept()
