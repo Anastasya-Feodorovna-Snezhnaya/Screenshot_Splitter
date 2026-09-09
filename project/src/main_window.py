@@ -5,7 +5,14 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout, QWidget
+    QFileDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+    QInputDialog,
 )
 
 from .config import ConfigManager
@@ -30,6 +37,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self.canvas = ImageCanvas(self)
+        self.canvas.set_mask_opacity(self.config.preview.mask_opacity)
         self.status = QLabel("未打开图片")
         self._build_ui()
         self._refresh_shortcuts()
@@ -48,9 +56,15 @@ class MainWindow(QMainWindow):
         fit_action.triggered.connect(self._fit_window)
         toolbar.addAction(fit_action)
 
-        zoom_action = QAction("100%", self)
-        zoom_action.triggered.connect(lambda: self.canvas.set_zoom(1.0))
-        toolbar.addAction(zoom_action)
+        original_size_action = QAction("原始尺寸", self)
+        original_size_action.setToolTip("以原图 1:1 像素比例显示")
+        original_size_action.triggered.connect(self._original_size)
+        toolbar.addAction(original_size_action)
+
+        mask_action = QAction("遮罩设置", self)
+        mask_action.setToolTip("调整删除区域的预览遮罩透明度")
+        mask_action.triggered.connect(self.edit_mask_opacity)
+        toolbar.addAction(mask_action)
 
         export_action = QAction("导出全部", self)
         export_action.triggered.connect(self.export_all)
@@ -59,10 +73,6 @@ class MainWindow(QMainWindow):
         shortcut_action = QAction("设置快捷键", self)
         shortcut_action.triggered.connect(self.edit_shortcuts)
         toolbar.addAction(shortcut_action)
-
-        view_menu = self.menuBar().addMenu("位置和缩放")
-        view_menu.addAction(fit_action)
-        view_menu.addAction(zoom_action)
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -103,9 +113,31 @@ class MainWindow(QMainWindow):
         self.canvas.fit_to_window()
         self._refresh_status("已适应窗口并居中")
 
+    def _original_size(self) -> None:
+        self.canvas.set_zoom(1.0)
+        self._refresh_status("已恢复原始尺寸")
+
+    def edit_mask_opacity(self) -> None:
+        value, accepted = QInputDialog.getInt(
+            self,
+            "遮罩设置",
+            "遮罩透明度（0% = 完全透明，100% = 完全不透明）：",
+            self.config.preview.mask_opacity,
+            0,
+            100,
+            5,
+        )
+        if not accepted:
+            return
+        self.config.preview.mask_opacity = value
+        self.config.save()
+        self.canvas.set_mask_opacity(value)
+        self._refresh_status(f"遮罩透明度：{value}%")
+
     def _toggle_region(self) -> None:
         index = self.canvas._selected_region
-        if index is None or not (0 <= index < len(self.state.regions())):
+        regions = self.state.regions()
+        if index is None or not (0 <= index < len(regions)):
             return
         if index in self.state.deleted_regions:
             self.state.deleted_regions.remove(index)
@@ -145,8 +177,7 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         if key == shortcuts.zoom_100:
-            self.canvas.set_zoom(1.0)
-            self._refresh_status("缩放：100%")
+            self._original_size()
             event.accept()
             return
         super().keyPressEvent(event)
