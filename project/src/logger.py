@@ -1,22 +1,25 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from PySide6.QtCore import QEvent, QObject
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
 
-class DebugLogger:
-    """可选的调试日志。
+def _enum_value(value: Any) -> Any:
+    """兼容 PySide6 枚举对象和普通整数。"""
+    return getattr(value, "value", value)
 
-    日志文件位于工作目录 logs/ 下，采用 JSON Lines 格式，便于人工查看和后续脚本分析。
-    """
+
+class DebugLogger:
+    """可选的运行时调试日志。"""
 
     def __init__(self, base_dir: Path, enabled: bool = False,
                  events: bool = False, api: bool = False, state: bool = False) -> None:
@@ -33,7 +36,7 @@ class DebugLogger:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             self.path = self.log_dir / f"debug_{stamp}.jsonl"
             self.write("app", "logger_started", {
-                "pid": __import__("os").getpid(),
+                "pid": os.getpid(),
                 "python": sys.version,
                 "categories": self.categories(),
             })
@@ -51,13 +54,13 @@ class DebugLogger:
     def write(self, category: str, name: str, data: Optional[dict[str, Any]] = None) -> None:
         if not self.enabled or self.path is None:
             return
-        record = {
+        record: dict[str, Any] = {
             "time": datetime.now().isoformat(timespec="milliseconds"),
             "monotonic": round(time.monotonic(), 6),
             "category": category,
             "name": name,
         }
-        if data:
+        if data is not None:
             record["data"] = data
         try:
             with self.path.open("a", encoding="utf-8") as file:
@@ -89,7 +92,7 @@ class DebugLogger:
 
 
 class _DebugEventFilter(QObject):
-    """记录程序收到的键盘、鼠标和滚轮事件。"""
+    """记录 QApplication 实际收到的键盘、鼠标和滚轮事件。"""
 
     _interesting = {
         QEvent.Type.KeyPress: "key_press",
@@ -109,26 +112,26 @@ class _DebugEventFilter(QObject):
         if name is not None:
             data: dict[str, Any] = {
                 "target": type(watched).__name__,
-                "event_type": int(event.type()),
+                "event_type": _enum_value(event.type()),
             }
             if isinstance(event, QKeyEvent):
                 data.update({
-                    "key": event.key(),
-                    "modifiers": int(event.modifiers()),
+                    "key": _enum_value(event.key()),
+                    "modifiers": _enum_value(event.modifiers()),
                     "text": event.text(),
                     "auto_repeat": event.isAutoRepeat(),
                 })
             elif isinstance(event, QMouseEvent):
                 data.update({
-                    "button": int(event.button()),
-                    "buttons": int(event.buttons()),
-                    "modifiers": int(event.modifiers()),
+                    "button": _enum_value(event.button()),
+                    "buttons": _enum_value(event.buttons()),
+                    "modifiers": _enum_value(event.modifiers()),
                     "position": [event.position().x(), event.position().y()],
                 })
             elif isinstance(event, QWheelEvent):
                 data.update({
-                    "buttons": int(event.buttons()),
-                    "modifiers": int(event.modifiers()),
+                    "buttons": _enum_value(event.buttons()),
+                    "modifiers": _enum_value(event.modifiers()),
                     "position": [event.position().x(), event.position().y()],
                     "angle_delta": [event.angleDelta().x(), event.angleDelta().y()],
                     "pixel_delta": [event.pixelDelta().x(), event.pixelDelta().y()],
@@ -139,8 +142,7 @@ class _DebugEventFilter(QObject):
 
 def build_logger(base_dir: Path, args) -> DebugLogger:
     """根据命令行参数创建日志器。"""
-    enabled = bool(args.log)
-    if not enabled:
+    if not args.log:
         return DebugLogger(base_dir)
 
     any_category = args.log_events or args.log_api or args.log_state
