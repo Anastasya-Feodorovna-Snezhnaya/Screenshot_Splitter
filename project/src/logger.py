@@ -19,24 +19,34 @@ def _enum_value(value: Any) -> Any:
 
 
 class DebugLogger:
-    """可选的运行时调试日志。"""
+    """可选的运行时 JSONL 调试日志。
+
+    默认配置只记录低频且对定位问题有价值的 API、状态和应用生命周期信息。
+    更细的 GUI 事件、画布交互和鼠标移动日志通过命令行选项单独开启。
+    """
 
     def __init__(self, base_dir: Path, enabled: bool = False,
                  events: bool = False, api: bool = False, state: bool = False,
-                 mouse_move: bool = False) -> None:
+                 interaction: bool = False, mouse_move: bool = False) -> None:
         self.enabled = enabled
         self.events_enabled = events
         self.api_enabled = api
         self.state_enabled = state
+        self.interaction_enabled = interaction
         self.mouse_move_enabled = mouse_move
         self.log_dir = base_dir / "logs"
         self.path: Optional[Path] = None
+        self._file = None
         self._event_filter: Optional[_DebugEventFilter] = None
 
         if self.enabled:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             self.path = self.log_dir / f"debug_{stamp}.jsonl"
+            try:
+                self._file = self.path.open("a", encoding="utf-8")
+            except OSError:
+                self._file = None
             self.write("app", "logger_started", {
                 "pid": os.getpid(),
                 "python": sys.version,
@@ -51,12 +61,14 @@ class DebugLogger:
             result.append("api")
         if self.state_enabled:
             result.append("state")
+        if self.interaction_enabled:
+            result.append("interaction")
         if self.mouse_move_enabled:
             result.append("mouse_move")
         return result
 
     def write(self, category: str, name: str, data: Optional[dict[str, Any]] = None) -> None:
-        if not self.enabled or self.path is None:
+        if not self.enabled or self._file is None:
             return
         record: dict[str, Any] = {
             "time": datetime.now().isoformat(timespec="milliseconds"),
@@ -67,8 +79,8 @@ class DebugLogger:
         if data is not None:
             record["data"] = data
         try:
-            with self.path.open("a", encoding="utf-8") as file:
-                file.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            self._file.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            self._file.flush()
         except OSError:
             # 日志故障不应影响主程序。
             pass
@@ -85,6 +97,10 @@ class DebugLogger:
         if self.state_enabled:
             self.write("state", name, data)
 
+    def interaction(self, name: str, data: Optional[dict[str, Any]] = None) -> None:
+        if self.interaction_enabled:
+            self.write("interaction", name, data)
+
     def install_event_filter(self, app: QApplication) -> None:
         if not self.enabled or not self.events_enabled:
             return
@@ -92,7 +108,7 @@ class DebugLogger:
         app.installEventFilter(self._event_filter)
 
     def set_startup_shortcuts(self, shortcuts: dict[str, str]) -> None:
-        """记录程序启动时的完整快捷键配置快照。该记录独立于日志分类开关。"""
+        """记录程序启动时的完整快捷键配置快照。"""
         if not self.enabled:
             return
         self.write("config", "startup_shortcuts", {"shortcuts": dict(shortcuts)})
@@ -101,10 +117,16 @@ class DebugLogger:
         if self._event_filter is not None:
             self._event_filter.flush_mouse_move()
         self.write("app", "logger_stopped")
+        if self._file is not None:
+            try:
+                self._file.close()
+            except OSError:
+                pass
+            self._file = None
 
 
 class _DebugEventFilter(QObject):
-    """记录 QApplication 实际收到的键盘、鼠标和滚轮事件。"""
+    """记录 QApplication 实际收到的键盘、鼠标按键和滚轮事件。"""
 
     _interesting = {
         QEvent.Type.KeyPress: "key_press",
@@ -222,16 +244,19 @@ class _DebugEventFilter(QObject):
 
 
 def build_logger(base_dir: Path, args) -> DebugLogger:
-    """根据命令行参数创建日志器。"""
+    """根据命令行参数创建日志器。
+
+    --log 启用推荐的默认日志配置；其余 --log-* 选项用于追加更细的分类。
+    """
     if not args.log:
         return DebugLogger(base_dir)
 
-    any_category = args.log_events or args.log_api or args.log_state
     return DebugLogger(
         base_dir,
         enabled=True,
-        events=args.log_events or not any_category,
-        api=args.log_api or not any_category,
-        state=args.log_state or not any_category,
+        events=args.log_events,
+        api=True,
+        state=True,
+        interaction=args.log_interaction,
         mouse_move=args.log_mouse_move,
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QPen, QPalette, QGuiApplication, QWheelEvent, QMouseEvent
+from PySide6.QtGui import QImage, QPainter, QPen, QPalette, QGuiApplication, QWheelEvent, QMouseEvent, QPaintEvent
 from PySide6.QtWidgets import QAbstractScrollArea, QWidget
 
 from .model import DocumentState, SplitLine
@@ -15,16 +15,22 @@ class _CanvasViewport(QWidget):
         self.canvas = canvas
         self.setMouseTracking(True)
 
+    def paintEvent(self, event: QPaintEvent) -> None:
+        self.canvas._paint_viewport(event)
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         self.canvas._handle_wheel_event(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        self.canvas._log_interaction("viewport_mouse_press", event)
         self.canvas._handle_mouse_press(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        self.canvas._log_interaction("viewport_mouse_move", event)
         self.canvas._handle_mouse_move(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self.canvas._log_interaction("viewport_mouse_release", event)
         self.canvas._handle_mouse_release(event)
 
 
@@ -36,6 +42,7 @@ class ImageCanvas(QAbstractScrollArea):
     splitLineMoveFinished = Signal(int, int)
     splitLineCreated = Signal(int)
     splitLineDeleted = Signal(int)
+    zoomChanged = Signal(float)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -52,6 +59,28 @@ class ImageCanvas(QAbstractScrollArea):
         self._line_drag_index: Optional[int] = None
         self._line_drag_old_y: Optional[int] = None
         self._selected_line: Optional[int] = None
+
+    def _logger(self):
+        return getattr(self.window(), "logger", None)
+
+    def _log_interaction(self, name: str, event: Optional[QMouseEvent] = None, **data) -> None:
+        logger = self._logger()
+        if logger is None or not logger.interaction_enabled:
+            return
+        if event is not None:
+            data.update({
+                "button": getattr(event.button(), "value", event.button()),
+                "buttons": getattr(event.buttons(), "value", event.buttons()),
+                "modifiers": getattr(event.modifiers(), "value", event.modifiers()),
+                "position": [event.position().x(), event.position().y()],
+            })
+        data.update({
+            "pan_active": self._pan_active,
+            "pan_button": getattr(self._pan_button, "value", self._pan_button),
+            "zoom": self.zoom,
+            "scroll": [self.horizontalScrollBar().value(), self.verticalScrollBar().value()],
+        })
+        logger.interaction(name, data)
 
     def set_document(self, image: QImage, state: DocumentState) -> None:
         self._stop_pan()
@@ -158,10 +187,13 @@ class ImageCanvas(QAbstractScrollArea):
             return
         if self._pan_active:
             delta = event.position() - self._pan_last
-            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(delta.x()))
-            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - round(delta.y()))
+            before = [self.horizontalScrollBar().value(), self.verticalScrollBar().value()]
+            self.horizontalScrollBar().setValue(before[0] - round(delta.x()))
+            self.verticalScrollBar().setValue(before[1] - round(delta.y()))
+            after = [self.horizontalScrollBar().value(), self.verticalScrollBar().value()]
             self._pan_last = event.position()
             self.viewport().update()
+            self._log_interaction("pan_move", event, delta=[delta.x(), delta.y()], scroll_before=before, scroll_after=after)
             event.accept()
             return
         event.ignore()
@@ -187,11 +219,19 @@ class ImageCanvas(QAbstractScrollArea):
         self._pan_button = event.button()
         self._pan_last = event.position()
         self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+        self.viewport().grabMouse()
+        self._log_interaction("pan_start", event)
 
     def _stop_pan(self) -> None:
+        was_active = self._pan_active
+        button = self._pan_button
+        if was_active:
+            self.viewport().releaseMouse()
         self._pan_active = False
         self._pan_button = None
         self.viewport().unsetCursor()
+        if was_active:
+            self._log_interaction("pan_stop", None, previous_button=getattr(button, "value", button))
 
     def _hit_line(self, y: float) -> Optional[int]:
         if not self._state:
@@ -272,6 +312,7 @@ class ImageCanvas(QAbstractScrollArea):
         self.horizontalScrollBar().setValue(round(image_anchor.x() * self.zoom - viewport_anchor.x()))
         self.verticalScrollBar().setValue(round(image_anchor.y() * self.zoom - viewport_anchor.y()))
         self.viewport().update()
+        self.zoomChanged.emit(self.zoom)
 
     def set_zoom(self, zoom: float) -> None:
         center = QPointF(self.viewport().width() / 2, self.viewport().height() / 2)
@@ -286,11 +327,12 @@ class ImageCanvas(QAbstractScrollArea):
         self._update_scrollbars()
         self.center_image()
 
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def _paint_viewport(self, event: QPaintEvent) -> None:
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         painter.fillRect(self.viewport().rect(), self.palette().dark())
         if not self._image or not self._state:
+            painter.end()
             return
         image_width = round(self._image.width() * self.zoom)
         image_height = round(self._image.height() * self.zoom)
@@ -313,3 +355,4 @@ class ImageCanvas(QAbstractScrollArea):
             screen_y = round(y * self.zoom) + top_offset
             painter.setPen(QPen(self.palette().highlight(), 2 if i == self._selected_line else 1))
             painter.drawLine(left, screen_y, left + image_width, screen_y)
+        painter.end()
