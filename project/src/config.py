@@ -7,7 +7,7 @@ from pathlib import Path
 
 @dataclass
 class ShortcutConfig:
-    """User-configurable keyboard shortcuts."""
+    """用户可配置的快捷键。"""
 
     add_split_line: str = "S"
     toggle_region: str = "SPACE"
@@ -23,7 +23,7 @@ class ShortcutConfig:
 
 
 class ConfigManager:
-    """Loads and persists application configuration next to the executable."""
+    """负责应用配置的加载和持久化。"""
 
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
@@ -42,7 +42,7 @@ class ConfigManager:
                 if key in valid and isinstance(value, str) and value:
                     setattr(self.shortcuts, key, value.upper())
         except (OSError, ValueError, TypeError):
-            # Invalid configuration should not prevent the application from starting.
+            # 配置文件无效时恢复默认配置，不阻止程序启动。
             self.shortcuts = ShortcutConfig()
 
     def save(self) -> None:
