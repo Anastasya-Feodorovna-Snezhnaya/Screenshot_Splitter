@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QPen
+from PySide6.QtGui import QImage, QPainter, QPen, QPalette
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication
 
 from .model import DocumentState, SplitLine
@@ -27,7 +27,7 @@ class ImageCanvas(QAbstractScrollArea):
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
-        self.setBackgroundRole(self.palette().Dark)
+        self.setBackgroundRole(QPalette.ColorRole.Dark)
         self._image: Optional[QImage] = None
         self._state: Optional[DocumentState] = None
         self.zoom = 1.0
