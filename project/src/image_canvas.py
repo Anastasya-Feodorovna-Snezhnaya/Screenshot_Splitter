@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QPen, QPalette
 from PySide6.QtWidgets import QAbstractScrollArea
 
@@ -22,6 +22,8 @@ class ImageCanvas(QAbstractScrollArea):
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+        self.viewport().installEventFilter(self)
         self.setBackgroundRole(QPalette.ColorRole.Dark)
         self._image: Optional[QImage] = None
         self._state: Optional[DocumentState] = None
@@ -77,9 +79,21 @@ class ImageCanvas(QAbstractScrollArea):
         self._update_scrollbars()
         super().resizeEvent(event)
 
-    def wheelEvent(self, event) -> None:
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.viewport():
+            if event.type() == QEvent.Type.Wheel:
+                return self._handle_wheel_event(event)
+            if event.type() == QEvent.Type.MouseButtonPress:
+                return self._handle_mouse_press(event)
+            if event.type() == QEvent.Type.MouseMove:
+                return self._handle_mouse_move(event)
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                return self._handle_mouse_release(event)
+        return super().eventFilter(watched, event)
+
+    def _handle_wheel_event(self, event) -> bool:
         if not self._image:
-            return
+            return False
 
         if event.modifiers() & Qt.KeyboardModifier.AltModifier:
             delta = event.angleDelta().y()
@@ -91,21 +105,24 @@ class ImageCanvas(QAbstractScrollArea):
                 factor = 1.1 if delta > 0 else 1.0 / 1.1
                 self._set_zoom(self.zoom * factor, anchor, image_anchor)
             event.accept()
-            return
+            return True
 
         delta = event.angleDelta()
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
         event.accept()
+        return True
 
-    def mousePressEvent(self, event) -> None:
+    def _handle_mouse_press(self, event) -> bool:
         if not self._image or not self._state:
-            return
+            return False
+
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
 
         if event.button() == Qt.MouseButton.MiddleButton:
             self._start_pan(event)
             event.accept()
-            return
+            return True
 
         if event.button() == Qt.MouseButton.LeftButton:
             image_y = self.image_point(event.position()).y()
@@ -119,23 +136,23 @@ class ImageCanvas(QAbstractScrollArea):
                 self._selected_region = self._region_at_y(int(image_y))
                 if self._selected_region is not None:
                     self.regionSelected.emit(self._selected_region)
-                # 左键拖动图片，单击仍然保留区域选择功能。
+                # 左键按住拖动图片；单击本身仍然完成区域选择。
                 self._start_pan(event)
             self.viewport().update()
             event.accept()
-            return
+            return True
 
-        super().mousePressEvent(event)
+        return False
 
-    def mouseMoveEvent(self, event) -> None:
+    def _handle_mouse_move(self, event) -> bool:
         if not self._image or not self._state:
-            return
+            return False
 
         if self._line_drag_index is not None:
             y = round(self.image_point(event.position()).y())
             self._move_line(self._line_drag_index, y)
             event.accept()
-            return
+            return True
 
         if self._pan_active:
             delta = event.position() - self._pan_last
@@ -148,19 +165,31 @@ class ImageCanvas(QAbstractScrollArea):
             )
             self._pan_last = event.position()
             event.accept()
-            return
+            return True
 
-        super().mouseMoveEvent(event)
+        return False
 
-    def mouseReleaseEvent(self, event) -> None:
+    def _handle_mouse_release(self, event) -> bool:
         if event.button() == self._pan_button:
             self._stop_pan()
             event.accept()
-            return
+            return True
 
         if event.button() == Qt.MouseButton.LeftButton:
             self._line_drag_index = None
-        super().mouseReleaseEvent(event)
+        return False
+
+    def wheelEvent(self, event) -> None:
+        self._handle_wheel_event(event)
+
+    def mousePressEvent(self, event) -> None:
+        self._handle_mouse_press(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        self._handle_mouse_move(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._handle_mouse_release(event)
 
     def keyPressEvent(self, event) -> None:
         if not self._state:
