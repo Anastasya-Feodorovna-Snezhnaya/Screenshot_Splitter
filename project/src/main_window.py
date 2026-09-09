@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QImage, QKeySequence
+from PySide6.QtGui import QAction, QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout, QWidget
 )
@@ -23,6 +23,7 @@ class MainWindow(QMainWindow):
         self.config = config
         self.state = DocumentState()
         self.source_image = QImage()
+        self._fit_shortcut: QShortcut | None = None
 
         self.setWindowTitle("Screenshot Splitter")
         self.resize(1200, 800)
@@ -155,6 +156,12 @@ class MainWindow(QMainWindow):
             self._refresh_shortcuts()
 
     def _refresh_shortcuts(self) -> None:
+        # 使用 QShortcut，使 F 在画布获得键盘焦点时也能触发。
+        if self._fit_shortcut is not None:
+            self._fit_shortcut.deleteLater()
+        self._fit_shortcut = QShortcut(QKeySequence(self.config.shortcuts.fit_window), self)
+        self._fit_shortcut.activated.connect(self._fit_window_from_shortcut)
+
         # 当前添加分割线功能只支持简单的单键快捷键。
         value = self.config.shortcuts.add_split_line
         key_map = {
@@ -168,6 +175,10 @@ class MainWindow(QMainWindow):
             key_map.get(value, Qt.Key.Key_S),
             Qt.KeyboardModifier.NoModifier,
         )
+
+    def _fit_window_from_shortcut(self) -> None:
+        self.canvas.fit_to_window()
+        self._refresh_status("已适应窗口")
 
     def export_all(self) -> None:
         if not self.state.image_path:
