@@ -5,8 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QImage, QKeySequence
 from PySide6.QtWidgets import (
-    QFileDialog, QLabel, QMainWindow, QMessageBox, QPushButton, QToolBar,
-    QVBoxLayout, QWidget
+    QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout, QWidget
 )
 
 from .config import ConfigManager
@@ -17,7 +16,7 @@ from .shortcut_dialog import ShortcutEditDialog
 
 
 class MainWindow(QMainWindow):
-    """Main editor window."""
+    """主编辑窗口。"""
 
     def __init__(self, config: ConfigManager) -> None:
         super().__init__()
@@ -115,12 +114,11 @@ class MainWindow(QMainWindow):
         self.status.setText(text)
 
     def keyPressEvent(self, event) -> None:
+        # QMainWindow 统一处理未被画布消耗的全局快捷键。
         key = self._shortcut_text(event)
         shortcuts = self.config.shortcuts
 
         if key == shortcuts.toggle_region:
-            # Region selection is maintained by the canvas; toggling only changes
-            # export eligibility and visually greys the region.
             index = self.canvas._selected_region
             if index is not None and 0 <= index < len(self.state.regions()):
                 if index in self.state.deleted_regions:
@@ -128,16 +126,20 @@ class MainWindow(QMainWindow):
                 else:
                     self.state.deleted_regions.add(index)
                 self.canvas.viewport().update()
-                self._refresh_status(f"区域 {index + 1}：{'保留' if index not in self.state.deleted_regions else '删除'}")
+                self._refresh_status(
+                    f"区域 {index + 1}：{'保留' if index not in self.state.deleted_regions else '删除'}"
+                )
                 event.accept()
                 return
 
         if key == shortcuts.fit_window:
             self.canvas.fit_to_window()
+            self._refresh_status("已适应窗口")
             event.accept()
             return
         if key == shortcuts.zoom_100:
             self.canvas.set_zoom(1.0)
+            self._refresh_status("缩放：100%")
             event.accept()
             return
         super().keyPressEvent(event)
@@ -153,8 +155,7 @@ class MainWindow(QMainWindow):
             self._refresh_shortcuts()
 
     def _refresh_shortcuts(self) -> None:
-        # The add-line key is currently parsed from the simple S-style default.
-        # More complex shortcuts can be extended here without changing the model.
+        # 当前添加分割线功能只支持简单的单键快捷键。
         value = self.config.shortcuts.add_split_line
         key_map = {
             "S": Qt.Key.Key_S,
