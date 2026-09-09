@@ -14,9 +14,10 @@ class _CanvasViewport(QWidget):
         super().__init__(canvas)
         self.canvas = canvas
         self.setMouseTracking(True)
+        self.setAutoFillBackground(False)
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        self.canvas._paint_viewport(event)
+        self.canvas._paint_viewport(event, self)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         self.canvas._handle_wheel_event(event)
@@ -99,7 +100,10 @@ class ImageCanvas(QAbstractScrollArea):
         self.viewport().update()
 
     def image_point(self, pos: QPointF) -> QPointF:
-        return QPointF((pos.x() + self.horizontalScrollBar().value()) / self.zoom, (pos.y() + self.verticalScrollBar().value()) / self.zoom)
+        return QPointF(
+            (pos.x() + self.horizontalScrollBar().value()) / self.zoom,
+            (pos.y() + self.verticalScrollBar().value()) / self.zoom,
+        )
 
     def _update_scrollbars(self) -> None:
         if not self._image:
@@ -140,9 +144,9 @@ class ImageCanvas(QAbstractScrollArea):
         self._handle_wheel_event(event)
 
     def _handle_wheel_event(self, event: QWheelEvent) -> None:
-        """Alt+滚轮缩放；普通滚轮明确不执行任何操作。"""
+        """Alt+滚轮缩放；普通滚轮交给滚动区域处理。"""
         if not self._image:
-            event.accept()
+            event.ignore()
             return
         modifiers = event.modifiers() | QGuiApplication.keyboardModifiers()
         if modifiers & Qt.KeyboardModifier.AltModifier:
@@ -150,7 +154,9 @@ class ImageCanvas(QAbstractScrollArea):
             if delta:
                 anchor = QPointF(event.position())
                 self._set_zoom(self.zoom * (1.1 ** (delta / 120.0)), anchor, self.image_point(anchor))
-        event.accept()
+            event.accept()
+            return
+        event.ignore()
 
     def _handle_mouse_press(self, event: QMouseEvent) -> None:
         if not self._image or not self._state:
@@ -327,32 +333,41 @@ class ImageCanvas(QAbstractScrollArea):
         self._update_scrollbars()
         self.center_image()
 
-    def _paint_viewport(self, event: QPaintEvent) -> None:
-        painter = QPainter(self.viewport())
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        painter.fillRect(self.viewport().rect(), self.palette().dark())
-        if not self._image or not self._state:
-            painter.end()
+    def _paint_viewport(self, event: QPaintEvent, viewport: QWidget) -> None:
+        painter = QPainter(viewport)
+        if not painter.isActive():
+            logger = self._logger()
+            if logger is not None and logger.state_enabled:
+                logger.state("canvas_paint_failed", {"reason": "painter_inactive"})
             return
-        image_width = round(self._image.width() * self.zoom)
-        image_height = round(self._image.height() * self.zoom)
-        left = -self.horizontalScrollBar().value()
-        top_offset = -self.verticalScrollBar().value()
-        target = self._image.rect()
-        target.setWidth(image_width)
-        target.setHeight(image_height)
-        target.translate(left, top_offset)
-        painter.drawImage(target, self._image)
-        if self.mask_opacity > 0:
-            mask = self.palette().mid().color()
-            mask.setAlpha(round(255 * self.mask_opacity / 100))
-            for region in self._state.regions():
-                if not region.keep:
-                    region_top = round(region.top * self.zoom) + top_offset
-                    region_bottom = round(region.bottom * self.zoom) + top_offset
-                    painter.fillRect(left, region_top, image_width, region_bottom - region_top, mask)
-        for i, y in enumerate(self._state.normalized_lines()):
-            screen_y = round(y * self.zoom) + top_offset
-            painter.setPen(QPen(self.palette().highlight(), 2 if i == self._selected_line else 1))
-            painter.drawLine(left, screen_y, left + image_width, screen_y)
-        painter.end()
+        try:
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.fillRect(event.rect(), self.palette().dark())
+            if not self._image or not self._state:
+                return
+
+            image_width = round(self._image.width() * self.zoom)
+            image_height = round(self._image.height() * self.zoom)
+            left = -self.horizontalScrollBar().value()
+            top = -self.verticalScrollBar().value()
+
+            target = self._image.rect()
+            target.setSize(target.size().scaled(image_width, image_height, Qt.AspectRatioMode.IgnoreAspectRatio))
+            target.moveTo(left, top)
+            painter.drawImage(target, self._image)
+
+            if self.mask_opacity > 0:
+                mask = self.palette().mid().color()
+                mask.setAlpha(round(255 * self.mask_opacity / 100))
+                for region in self._state.regions():
+                    if not region.keep:
+                        region_top = round(region.top * self.zoom) + top
+                        region_bottom = round(region.bottom * self.zoom) + top
+                        painter.fillRect(left, region_top, image_width, region_bottom - region_top, mask)
+
+            for i, y in enumerate(self._state.normalized_lines()):
+                screen_y = round(y * self.zoom) + top
+                painter.setPen(QPen(self.palette().highlight(), 2 if i == self._selected_line else 1))
+                painter.drawLine(left, screen_y, left + image_width, screen_y)
+        finally:
+            painter.end()
