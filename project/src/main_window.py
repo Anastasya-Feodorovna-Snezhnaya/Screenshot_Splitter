@@ -50,6 +50,11 @@ class MainWindow(QMainWindow):
         zoom_action.triggered.connect(lambda: self.canvas.set_zoom(1.0))
         toolbar.addAction(zoom_action)
 
+        reset_action = QAction("位置和缩放", self)
+        reset_action.setToolTip("恢复为适应窗口并将图片整体居中")
+        reset_action.triggered.connect(self.reset_view)
+        toolbar.addAction(reset_action)
+
         export_action = QAction("导出全部", self)
         export_action.triggered.connect(self.export_all)
         toolbar.addAction(export_action)
@@ -57,6 +62,12 @@ class MainWindow(QMainWindow):
         shortcut_action = QAction("设置快捷键", self)
         shortcut_action.triggered.connect(self.edit_shortcuts)
         toolbar.addAction(shortcut_action)
+
+        # 顶级菜单：集中放置视图位置和缩放相关操作。
+        view_menu = self.menuBar().addMenu("位置和缩放")
+        view_menu.addAction(reset_action)
+        view_menu.addAction(fit_action)
+        view_menu.addAction(zoom_action)
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -92,6 +103,11 @@ class MainWindow(QMainWindow):
         self.canvas.set_document(image, self.state)
         self.canvas.fit_to_window()
         self._refresh_status()
+
+    def reset_view(self) -> None:
+        """恢复为适应窗口并将图片整体居中。"""
+        self.canvas.fit_to_window()
+        self._refresh_status("位置和缩放已重置")
 
     def _on_region_selected(self, index: int) -> None:
         self._refresh_status(f"当前区域：{index + 1}")
