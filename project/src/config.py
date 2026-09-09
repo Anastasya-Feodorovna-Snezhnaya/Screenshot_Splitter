@@ -22,6 +22,13 @@ class ShortcutConfig:
     zoom_100: str = "1"
 
 
+@dataclass
+class PreviewConfig:
+    """预览层的显示配置。"""
+
+    mask_opacity: int = 55
+
+
 class ConfigManager:
     """负责应用配置的加载和持久化。"""
 
@@ -29,6 +36,7 @@ class ConfigManager:
         self.base_dir = base_dir
         self.path = self.base_dir / "settings.json"
         self.shortcuts = ShortcutConfig()
+        self.preview = PreviewConfig()
 
     def load(self) -> None:
         if not self.path.exists():
@@ -37,17 +45,26 @@ class ConfigManager:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             shortcut_data = data.get("shortcuts", {})
-            valid = set(asdict(self.shortcuts))
+            valid_shortcuts = set(asdict(self.shortcuts))
             for key, value in shortcut_data.items():
-                if key in valid and isinstance(value, str) and value:
+                if key in valid_shortcuts and isinstance(value, str) and value:
                     setattr(self.shortcuts, key, value.upper())
+
+            preview_data = data.get("preview", {})
+            opacity = preview_data.get("mask_opacity", self.preview.mask_opacity)
+            if isinstance(opacity, int) and 0 <= opacity <= 100:
+                self.preview.mask_opacity = opacity
         except (OSError, ValueError, TypeError):
             # 配置文件无效时恢复默认配置，不阻止程序启动。
             self.shortcuts = ShortcutConfig()
+            self.preview = PreviewConfig()
 
     def save(self) -> None:
         self.base_dir.mkdir(parents=True, exist_ok=True)
-        data = {"shortcuts": asdict(self.shortcuts)}
+        data = {
+            "shortcuts": asdict(self.shortcuts),
+            "preview": asdict(self.preview),
+        }
         self.path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8",
