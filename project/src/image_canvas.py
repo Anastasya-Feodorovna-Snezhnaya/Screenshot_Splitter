@@ -2,11 +2,31 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QEvent, QPointF, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QPen, QPalette, QGuiApplication
-from PySide6.QtWidgets import QAbstractScrollArea
+from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtGui import QImage, QPainter, QPen, QPalette, QGuiApplication, QWheelEvent, QMouseEvent
+from PySide6.QtWidgets import QAbstractScrollArea, QWidget
 
 from .model import DocumentState, SplitLine
+
+
+class _CanvasViewport(QWidget):
+    """专门接收画布鼠标/滚轮事件的视口控件。"""
+
+    def __init__(self, canvas: "ImageCanvas") -> None:
+        super().__init__(canvas)
+        self.canvas = canvas
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        self.canvas._handle_wheel_event(event)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        self.canvas._handle_mouse_press(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        self.canvas._handle_mouse_move(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self.canvas._handle_mouse_release(event)
 
 
 class ImageCanvas(QAbstractScrollArea):
@@ -22,9 +42,13 @@ class ImageCanvas(QAbstractScrollArea):
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
-        self.viewport().setMouseTracking(True)
-        self.viewport().installEventFilter(self)
         self.setBackgroundRole(QPalette.ColorRole.Dark)
+
+        # 不再依赖 eventFilter 捕获 QAbstractScrollArea 的 viewport 事件。
+        # 使用明确的 viewport 子类，确保 Windows 下鼠标滚轮事件一定经过这里。
+        self.setViewport(_CanvasViewport(self))
+        self.viewport().setMouseTracking(True)
+
         self._image: Optional[QImage] = None
         self._state: Optional[DocumentState] = None
         self.zoom = 1.0
@@ -55,18 +79,14 @@ class ImageCanvas(QAbstractScrollArea):
         self._add_line_modifier = modifier
 
     def set_mask_opacity(self, opacity: int) -> None:
-        """设置删除区域遮罩透明度，范围为 0~100%。"""
         self.mask_opacity = max(0, min(100, int(opacity)))
         self.viewport().update()
 
     def image_point(self, pos: QPointF) -> QPointF:
-        """把预览区域坐标转换为原图像素坐标。"""
+        """把视口坐标转换为原图坐标。"""
         x = (pos.x() + self.horizontalScrollBar().value()) / self.zoom
         y = (pos.y() + self.verticalScrollBar().value()) / self.zoom
         return QPointF(x, y)
-
-    def viewport_point_from_image_y(self, y: int) -> float:
-        return y * self.zoom - self.verticalScrollBar().value()
 
     def _update_scrollbars(self) -> None:
         if not self._image:
@@ -87,7 +107,6 @@ class ImageCanvas(QAbstractScrollArea):
         self.verticalScrollBar().setPageStep(self.viewport().height())
 
     def center_image(self) -> None:
-        """将图片整体居中显示。"""
         if not self._image:
             return
         width = round(self._image.width() * self.zoom)
@@ -104,41 +123,34 @@ class ImageCanvas(QAbstractScrollArea):
         self.verticalScrollBar().setValue(old_v)
         super().resizeEvent(event)
 
-    def eventFilter(self, watched, event) -> bool:
-        if watched is self.viewport():
-            if event.type() == QEvent.Type.Wheel:
-                return self._handle_wheel_event(event)
-            if event.type() == QEvent.Type.MouseButtonPress:
-                return self._handle_mouse_press(event)
-            if event.type() == QEvent.Type.MouseMove:
-                return self._handle_mouse_move(event)
-            if event.type() == QEvent.Type.MouseButtonRelease:
-                return self._handle_mouse_release(event)
-        return super().eventFilter(watched, event)
-
-    def _handle_wheel_event(self, event) -> bool:
+    def _handle_wheel_event(self, event: QWheelEvent) -> bool:
         if not self._image:
+            event.ignore()
             return False
 
-        # QAbstractScrollArea 的默认滚轮行为会用于滚动视口。这里完全接管滚轮，
-        # 只保留 Alt+滚轮缩放；普通滚轮不再移动图片，避免与缩放逻辑发生耦合。
+        # 关键点：这里只让 Alt+滚轮负责缩放，普通滚轮不做任何滚动。
+        # event.modifiers() 是本次滚轮事件产生时 Qt 记录的修饰键状态；
+        # keyboardModifiers() 作为 Windows 下的补充读取。
         modifiers = event.modifiers() | QGuiApplication.keyboardModifiers()
         if modifiers & Qt.KeyboardModifier.AltModifier:
             delta = event.angleDelta().y()
             if delta == 0:
                 delta = event.pixelDelta().y()
+
             if delta != 0:
-                anchor = QPointF(event.position())
-                image_anchor = self.image_point(anchor)
+                viewport_anchor = QPointF(event.position())
+                image_anchor = self.image_point(viewport_anchor)
                 factor = 1.1 ** (delta / 120.0)
-                self._set_zoom(self.zoom * factor, anchor, image_anchor)
+                self._set_zoom(self.zoom * factor, viewport_anchor, image_anchor)
+
             event.accept()
             return True
 
+        # 普通滚轮明确禁用，不再触发 QAbstractScrollArea 的默认滚动。
         event.accept()
         return True
 
-    def _handle_mouse_press(self, event) -> bool:
+    def _handle_mouse_press(self, event: QMouseEvent) -> bool:
         if not self._image or not self._state:
             return False
         self.setFocus(Qt.FocusReason.MouseFocusReason)
@@ -166,7 +178,7 @@ class ImageCanvas(QAbstractScrollArea):
             return True
         return False
 
-    def _handle_mouse_move(self, event) -> bool:
+    def _handle_mouse_move(self, event: QMouseEvent) -> bool:
         if not self._image or not self._state:
             return False
         if self._line_drag_index is not None:
@@ -182,7 +194,7 @@ class ImageCanvas(QAbstractScrollArea):
             return True
         return False
 
-    def _handle_mouse_release(self, event) -> bool:
+    def _handle_mouse_release(self, event: QMouseEvent) -> bool:
         if event.button() == self._pan_button:
             self._stop_pan()
             event.accept()
@@ -191,23 +203,25 @@ class ImageCanvas(QAbstractScrollArea):
             self._line_drag_index = None
         return False
 
-    def wheelEvent(self, event) -> None:
+    def wheelEvent(self, event: QWheelEvent) -> None:
         self._handle_wheel_event(event)
 
-    def mousePressEvent(self, event) -> None:
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         self._handle_mouse_press(event)
 
-    def mouseMoveEvent(self, event) -> None:
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         self._handle_mouse_move(event)
 
-    def mouseReleaseEvent(self, event) -> None:
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._handle_mouse_release(event)
 
     def keyPressEvent(self, event) -> None:
         if not self._state:
             return super().keyPressEvent(event)
         if event.key() == self._add_line_key and event.modifiers() == self._add_line_modifier:
-            y = round(self.image_point(self.mapFromGlobal(self.cursor().pos())).y())
+            global_pos = self.cursor().pos()
+            viewport_pos = self.viewport().mapFromGlobal(global_pos)
+            y = round(self.image_point(QPointF(viewport_pos)).y())
             self._create_line(y)
             event.accept()
             return
@@ -232,7 +246,7 @@ class ImageCanvas(QAbstractScrollArea):
                 return
         super().keyPressEvent(event)
 
-    def _start_pan(self, event) -> None:
+    def _start_pan(self, event: QMouseEvent) -> None:
         self._pan_active = True
         self._pan_button = event.button()
         self._pan_last = event.position()
@@ -299,8 +313,13 @@ class ImageCanvas(QAbstractScrollArea):
         new_zoom = max(0.05, min(8.0, zoom))
         if abs(new_zoom - self.zoom) < 1e-9:
             return
+
         self.zoom = new_zoom
         self._update_scrollbars()
+
+        # 保持“鼠标位置对应的原图坐标”不变：
+        # viewport = image * zoom - scroll
+        # 因此新的 scroll = image_anchor * new_zoom - viewport_anchor。
         target_x = round(image_anchor.x() * self.zoom - viewport_anchor.x())
         target_y = round(image_anchor.y() * self.zoom - viewport_anchor.y())
         self.horizontalScrollBar().setValue(target_x)
