@@ -1,0 +1,2 @@
+# 排除obsidian的软件的工作目录
+.obsidian/
