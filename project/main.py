@@ -14,10 +14,11 @@ from src.main_window import MainWindow
 def parse_args() -> argparse.Namespace:
     """解析调试日志相关命令行参数。"""
     parser = argparse.ArgumentParser(description="Screenshot Splitter")
-    parser.add_argument("--log", action="store_true", help="启用调试日志；未指定类别时记录全部日志类别。")
-    parser.add_argument("--log-events", action="store_true", help="记录程序收到的键盘、鼠标和滚轮事件。")
+    parser.add_argument("--log", action="store_true", help="启用调试日志；未指定类别时记录全部普通日志类别。")
+    parser.add_argument("--log-events", action="store_true", help="记录程序收到的键盘、鼠标按键和滚轮事件。")
     parser.add_argument("--log-api", action="store_true", help="记录主要程序接口调用及结果。")
     parser.add_argument("--log-state", action="store_true", help="记录当前文档、选区、分割线和预览状态。")
+    parser.add_argument("--log-mouse-move", action="store_true", help="额外记录鼠标移动；连续且状态不变的移动会自动合并。")
     return parser.parse_args()
 
 
@@ -49,6 +50,12 @@ def main() -> int:
 
     config = ConfigManager(base_dir)
     config.load()
+
+    # 在创建主窗口前保存完整快捷键快照。日志中的事件解释不依赖之后的配置修改。
+    logger.set_startup_shortcuts({
+        name: value
+        for name, value in vars(config.shortcuts).items()
+    })
 
     window = MainWindow(config, logger)
     window.show()
