@@ -24,6 +24,7 @@ class MainWindow(QMainWindow):
         self.state = DocumentState()
         self.source_image = QImage()
         self._fit_shortcut: QShortcut | None = None
+        self._toggle_region_shortcut: QShortcut | None = None
 
         self.setWindowTitle("Screenshot Splitter")
         self.resize(1200, 800)
@@ -43,17 +44,13 @@ class MainWindow(QMainWindow):
         toolbar.addAction(open_action)
 
         fit_action = QAction("适应窗口", self)
-        fit_action.triggered.connect(self.canvas.fit_to_window)
+        fit_action.setToolTip("恢复为适应窗口并将图片整体居中")
+        fit_action.triggered.connect(self._fit_window)
         toolbar.addAction(fit_action)
 
         zoom_action = QAction("100%", self)
         zoom_action.triggered.connect(lambda: self.canvas.set_zoom(1.0))
         toolbar.addAction(zoom_action)
-
-        reset_action = QAction("位置和缩放", self)
-        reset_action.setToolTip("恢复为适应窗口并将图片整体居中")
-        reset_action.triggered.connect(self.reset_view)
-        toolbar.addAction(reset_action)
 
         export_action = QAction("导出全部", self)
         export_action.triggered.connect(self.export_all)
@@ -63,9 +60,7 @@ class MainWindow(QMainWindow):
         shortcut_action.triggered.connect(self.edit_shortcuts)
         toolbar.addAction(shortcut_action)
 
-        # 顶级菜单：集中放置视图位置和缩放相关操作。
         view_menu = self.menuBar().addMenu("位置和缩放")
-        view_menu.addAction(reset_action)
         view_menu.addAction(fit_action)
         view_menu.addAction(zoom_action)
 
@@ -104,10 +99,22 @@ class MainWindow(QMainWindow):
         self.canvas.fit_to_window()
         self._refresh_status()
 
-    def reset_view(self) -> None:
-        """恢复为适应窗口并将图片整体居中。"""
+    def _fit_window(self) -> None:
         self.canvas.fit_to_window()
-        self._refresh_status("位置和缩放已重置")
+        self._refresh_status("已适应窗口并居中")
+
+    def _toggle_region(self) -> None:
+        index = self.canvas._selected_region
+        if index is None or not (0 <= index < len(self.state.regions())):
+            return
+        if index in self.state.deleted_regions:
+            self.state.deleted_regions.remove(index)
+        else:
+            self.state.deleted_regions.add(index)
+        self.canvas.viewport().update()
+        self._refresh_status(
+            f"区域 {index + 1}：{'保留' if index not in self.state.deleted_regions else '删除'}"
+        )
 
     def _on_region_selected(self, index: int) -> None:
         self._refresh_status(f"当前区域：{index + 1}")
@@ -131,27 +138,10 @@ class MainWindow(QMainWindow):
         self.status.setText(text)
 
     def keyPressEvent(self, event) -> None:
-        # QMainWindow 统一处理未被画布消耗的全局快捷键。
         key = self._shortcut_text(event)
         shortcuts = self.config.shortcuts
-
-        if key == shortcuts.toggle_region:
-            index = self.canvas._selected_region
-            if index is not None and 0 <= index < len(self.state.regions()):
-                if index in self.state.deleted_regions:
-                    self.state.deleted_regions.remove(index)
-                else:
-                    self.state.deleted_regions.add(index)
-                self.canvas.viewport().update()
-                self._refresh_status(
-                    f"区域 {index + 1}：{'保留' if index not in self.state.deleted_regions else '删除'}"
-                )
-                event.accept()
-                return
-
         if key == shortcuts.fit_window:
-            self.canvas.fit_to_window()
-            self._refresh_status("已适应窗口")
+            self._fit_window()
             event.accept()
             return
         if key == shortcuts.zoom_100:
@@ -172,13 +162,16 @@ class MainWindow(QMainWindow):
             self._refresh_shortcuts()
 
     def _refresh_shortcuts(self) -> None:
-        # 使用 QShortcut，使 F 在画布获得键盘焦点时也能触发。
         if self._fit_shortcut is not None:
             self._fit_shortcut.deleteLater()
         self._fit_shortcut = QShortcut(QKeySequence(self.config.shortcuts.fit_window), self)
-        self._fit_shortcut.activated.connect(self._fit_window_from_shortcut)
+        self._fit_shortcut.activated.connect(self._fit_window)
 
-        # 当前添加分割线功能只支持简单的单键快捷键。
+        if self._toggle_region_shortcut is not None:
+            self._toggle_region_shortcut.deleteLater()
+        self._toggle_region_shortcut = QShortcut(QKeySequence(self.config.shortcuts.toggle_region), self)
+        self._toggle_region_shortcut.activated.connect(self._toggle_region)
+
         value = self.config.shortcuts.add_split_line
         key_map = {
             "S": Qt.Key.Key_S,
@@ -191,10 +184,6 @@ class MainWindow(QMainWindow):
             key_map.get(value, Qt.Key.Key_S),
             Qt.KeyboardModifier.NoModifier,
         )
-
-    def _fit_window_from_shortcut(self) -> None:
-        self.canvas.fit_to_window()
-        self._refresh_status("已适应窗口")
 
     def export_all(self) -> None:
         if not self.state.image_path:
