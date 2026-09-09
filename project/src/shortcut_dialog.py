@@ -21,7 +21,7 @@ DISPLAY_NAMES = {
     "move_line_up_fast": "分割线向上 10px",
     "move_line_down_fast": "分割线向下 10px",
     "fit_window": "适应窗口",
-    "zoom_100": "100% 缩放",
+    "zoom_100": "原始尺寸",
 }
 
 
@@ -44,7 +44,10 @@ class ShortcutEditDialog(QDialog):
             self.edits[key] = edit
             form.addRow(DISPLAY_NAMES.get(key, key), edit)
 
-        note = QLabel("可直接输入 Qt 支持的快捷键文本。保存前会检查重复绑定。")
+        note = QLabel(
+            "可直接输入 Qt 支持的快捷键文本。保存前会检查重复绑定。"
+            "当前未实现的快捷键会保存配置，但暂不产生对应操作。"
+        )
         note.setWordWrap(True)
 
         buttons = QDialogButtonBox(
