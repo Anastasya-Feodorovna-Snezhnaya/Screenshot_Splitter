@@ -10,12 +10,17 @@ from src.main_window import MainWindow
 
 
 def main() -> int:
-    """Application entry point."""
+    """程序入口。"""
     app = QApplication(sys.argv)
     app.setApplicationName("Screenshot Splitter")
     app.setOrganizationName("ScreenshotSplitter")
 
-    base_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    # 开发环境使用项目目录，打包后使用 EXE 所在目录保存配置。
+    base_dir = (
+        Path(sys.executable).resolve().parent
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parent
+    )
     config = ConfigManager(base_dir)
     config.load()
 
