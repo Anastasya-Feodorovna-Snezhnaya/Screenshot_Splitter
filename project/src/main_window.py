@@ -32,6 +32,7 @@ class MainWindow(QMainWindow):
         self._restore_window_state()
         self.canvas = ImageCanvas(self)
         self.canvas.set_mask_opacity(self.config.preview.mask_opacity)
+        self.canvas.zoomChanged.connect(lambda _zoom: self._refresh_status("已缩放"))
         self.status = QLabel("未打开图片")
         self._build_ui()
         self._refresh_shortcuts()
