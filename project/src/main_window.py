@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QImage, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QRect
+from PySide6.QtGui import QAction, QGuiApplication, QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout,
     QWidget, QInputDialog, QLineEdit,
@@ -27,9 +28,14 @@ class MainWindow(QMainWindow):
         self.state = DocumentState()
         self.source_image = QImage()
         self._shortcuts: dict[str, QShortcut] = {}
+        self._history: list[DocumentState] = []
+        self._history_index = -1
+        self._history_restoring = False
 
         self.setWindowTitle("Screenshot Splitter")
+        self.setAcceptDrops(True)
         self.resize(1200, 800)
+        self._restore_window_state()
 
         self.canvas = ImageCanvas(self)
         self.canvas.logger = self.logger
@@ -38,6 +44,48 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._refresh_shortcuts()
         self._log_state("window_initialized")
+
+    def _restore_window_state(self) -> None:
+        width = self.config.window.width
+        height = self.config.window.height
+        if width < 200 or height < 150:
+            width, height = 1200, 800
+        self.resize(width, height)
+        if self.config.window.fullscreen:
+            self.showFullScreen()
+            return
+
+        saved = QRect(self.config.window.x, self.config.window.y, width, height)
+        screens = QGuiApplication.screens()
+        if self.config.window.x < 0 or self.config.window.y < 0 or not any(
+            saved.intersects(screen.availableGeometry()) for screen in screens
+        ):
+            self._center_window()
+        else:
+            self.move(self.config.window.x, self.config.window.y)
+
+    def _center_window(self) -> None:
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        self.move(
+            area.left() + (area.width() - self.width()) // 2,
+            area.top() + (area.height() - self.height()) // 2,
+        )
+
+    def _save_window_state(self) -> None:
+        self.config.window.fullscreen = self.isFullScreen()
+        if not self.isFullScreen():
+            self.config.window.x = self.x()
+            self.config.window.y = self.y()
+            self.config.window.width = self.width()
+            self.config.window.height = self.height()
+        self.config.save()
+
+    def closeEvent(self, event) -> None:
+        self._save_window_state()
+        super().closeEvent(event)
 
     def _log_api(self, name: str, data: dict | None = None) -> None:
         self.logger.api(name, data)
@@ -50,7 +98,6 @@ class MainWindow(QMainWindow):
             "image_path": self.state.image_path,
             "image_size": [self.state.image_width, self.state.image_height],
             "zoom": self.canvas.zoom,
-            "selected_region": self.canvas._selected_region,
             "selected_line": self.canvas._selected_line,
             "split_lines": self.state.normalized_lines(),
             "deleted_regions": [list(item) for item in sorted(self.state.deleted_regions)],
@@ -90,47 +137,41 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.canvas)
         layout.addWidget(self.status)
         self.setCentralWidget(central)
-        self.canvas.regionSelected.connect(self._on_region_selected)
         self.canvas.splitLineSelected.connect(self._on_line_selected)
         self.canvas.splitLineCreated.connect(self._on_split_line_created)
         self.canvas.splitLineMoved.connect(self._on_split_line_moved)
+        self.canvas.splitLineMoveFinished.connect(self._on_split_line_move_finished)
         self.canvas.splitLineDeleted.connect(self._on_split_line_deleted)
 
-    def open_image(self) -> None:
-        self._log_api("open_image.begin")
-        path, _ = QFileDialog.getOpenFileName(self, "选择 PNG 长截图", "", "PNG 图片 (*.png)")
+    def open_image(self, path: str | None = None) -> None:
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(self, "选择 PNG 长截图", "", "PNG 图片 (*.png)")
         if not path:
-            self._log_api("open_image.cancelled")
             return
         image = QImage(path)
         if image.isNull():
-            self._log_api("open_image.failed", {"path": path, "reason": "invalid_image"})
             QMessageBox.critical(self, "打开失败", "无法读取该 PNG 文件。")
             return
         self.source_image = image
-        self.state = DocumentState(image_path=str(Path(path).resolve()), image_width=image.width(), image_height=image.height())
+        self.state = DocumentState(
+            image_path=str(Path(path).resolve()),
+            image_width=image.width(),
+            image_height=image.height(),
+        )
         self.canvas.set_document(image, self.state)
         self.canvas.fit_to_window()
+        self._reset_history()
         self._refresh_status()
-        self._log_api("open_image.success", {"path": str(Path(path).resolve()), "size": [image.width(), image.height()]})
-        self._log_state("image_opened")
 
     def _fit_window(self) -> None:
-        self._log_api("fit_window.begin")
         self.canvas.fit_to_window()
         self._refresh_status("已适应窗口并居中")
-        self._log_api("fit_window.end", {"zoom": self.canvas.zoom})
-        self._log_state("fit_window")
 
     def _original_size(self) -> None:
-        self._log_api("original_size.begin")
         self.canvas.set_zoom(1.0)
         self._refresh_status("已恢复原始尺寸")
-        self._log_api("original_size.end", {"zoom": self.canvas.zoom})
-        self._log_state("original_size")
 
     def edit_mask_opacity(self) -> None:
-        self._log_api("edit_mask_opacity.begin")
         dialog = QInputDialog(self)
         dialog.setWindowTitle("遮罩设置")
         dialog.setLabelText("遮罩透明度（输入 0-100，可不输入 %）：")
@@ -142,7 +183,6 @@ class MainWindow(QMainWindow):
         if line_edit is not None:
             line_edit.setPlaceholderText("例如：55 或 55%")
         if dialog.exec() != QInputDialog.DialogCode.Accepted:
-            self._log_api("edit_mask_opacity.cancelled")
             return
         text = dialog.textValue().strip()
         if text.endswith("%"):
@@ -150,28 +190,31 @@ class MainWindow(QMainWindow):
         try:
             value = int(text)
         except ValueError:
-            self._log_api("edit_mask_opacity.invalid", {"input": text})
             QMessageBox.warning(self, "输入无效", "请输入 0 到 100 之间的整数，可带 %。")
             return
         if not 0 <= value <= 100:
-            self._log_api("edit_mask_opacity.invalid", {"input": text, "value": value})
             QMessageBox.warning(self, "输入无效", "请输入 0 到 100 之间的整数。")
             return
         self.config.preview.mask_opacity = value
         self.config.save()
         self.canvas.set_mask_opacity(value)
         self._refresh_status(f"遮罩透明度：{value}%")
-        self._log_api("edit_mask_opacity.success", {"value": value})
-        self._log_state("mask_opacity_changed")
 
     def _toggle_region(self) -> None:
-        self._log_api("toggle_region.begin", {"selected_region": self.canvas._selected_region})
-        index = self.canvas._selected_region
-        regions = self.state.regions()
-        if index is None or not (0 <= index < len(regions)):
-            self._log_api("toggle_region.ignored", {"reason": "no_selected_region"})
+        """Space 触发时只读取一次当前鼠标位置，不追踪鼠标移动。"""
+        if not self.state.image_path:
             return
-
+        global_pos = QGuiApplication.cursor().pos()
+        viewport_pos = self.canvas.viewport().mapFromGlobal(global_pos)
+        if not self.canvas.viewport().rect().contains(viewport_pos):
+            return
+        image_point = self.canvas.image_point(viewport_pos)
+        if not (0 <= image_point.x() < self.state.image_width and 0 <= image_point.y() < self.state.image_height):
+            return
+        index = self.canvas._region_at_y(int(image_point.y()))
+        regions = self.state.regions()
+        if index is None or not 0 <= index < len(regions):
+            return
         region = regions[index]
         key = (region.top, region.bottom)
         if key in self.state.deleted_regions:
@@ -180,71 +223,106 @@ class MainWindow(QMainWindow):
         else:
             self.state.deleted_regions.add(key)
             keep = False
+        self._record_history()
         self.canvas.viewport().update()
         self._refresh_status(f"区域 {index + 1}：{'保留' if keep else '删除'}")
-        self._log_api("toggle_region.end", {"region": index, "bounds": list(key), "keep": keep})
         self._log_state("region_toggled")
-
-    def _on_region_selected(self, index: int) -> None:
-        self._refresh_status(f"当前区域：{index + 1}")
-        self._log_api("region_selected", {"index": index})
-        self._log_state("region_selected")
 
     def _on_line_selected(self, index: int) -> None:
         lines = self.state.normalized_lines()
         if 0 <= index < len(lines):
             self._refresh_status(f"选中分割线：Y={lines[index]} px")
-            self._log_api("split_line_selected", {"index": index, "y": lines[index]})
-            self._log_state("split_line_selected")
 
     def _on_split_line_created(self, y: int) -> None:
-        # 新增内部边界不会影响已有区域的删除状态；边界记录保持在原有上下界上。
         self.state.discard_invalid_deleted_regions()
+        self._record_history()
         self._refresh_status()
-        self._log_api("split_line_created", {"y": y})
         self._log_state("split_line_created")
 
     def _on_split_line_moved(self, old_y: int, new_y: int) -> None:
         self.state.update_deleted_region_boundary(old_y, new_y)
         self.state.discard_invalid_deleted_regions()
         self._refresh_status()
-        self._log_api("split_line_moved", {"old_y": old_y, "new_y": new_y})
+
+    def _on_split_line_move_finished(self, old_y: int, new_y: int) -> None:
+        if old_y != new_y:
+            self._record_history()
         self._log_state("split_line_moved")
 
     def _on_split_line_deleted(self, y: int) -> None:
-        # 删除边界后，所有不再对应实际区域的删除状态自动失效。
         self.state.discard_invalid_deleted_regions()
+        self._record_history()
         self._refresh_status()
-        self._log_api("split_line_deleted", {"y": y})
         self._log_state("split_line_deleted")
 
-    def _refresh_status(self, prefix: str | None = None) -> None:
-        regions = self.state.regions()
-        kept = sum(r.keep for r in regions)
-        self.status.setText(
-            f"{prefix or '就绪'}    区域：{len(regions)}    保留：{kept}    "
-            f"删除：{len(regions) - kept}    分割线：{len(self.state.normalized_lines())}    "
-            f"缩放：{self.canvas.zoom * 100:.1f}%"
-        )
+    def _clone_state(self) -> DocumentState:
+        return deepcopy(self.state)
+
+    def _reset_history(self) -> None:
+        self._history = [self._clone_state()]
+        self._history_index = 0
+
+    def _record_history(self) -> None:
+        if self._history_restoring:
+            return
+        snapshot = self._clone_state()
+        if self._history and self._history[self._history_index] == snapshot:
+            return
+        self._history = self._history[: self._history_index + 1]
+        self._history.append(snapshot)
+        self._history_index += 1
+
+    def _apply_history_snapshot(self, snapshot: DocumentState) -> None:
+        self.state = deepcopy(snapshot)
+        self.canvas.set_document(self.source_image, self.state)
+        self.canvas.fit_to_window()
+        self.canvas.viewport().update()
+
+    def _undo(self) -> None:
+        if self._history_index <= 0:
+            return
+        self._history_restoring = True
+        try:
+            self._history_index -= 1
+            self._apply_history_snapshot(self._history[self._history_index])
+        finally:
+            self._history_restoring = False
+        self._refresh_status("已撤销")
+        self._log_state("undo")
+
+    def _redo(self) -> None:
+        if self._history_index + 1 >= len(self._history):
+            return
+        self._history_restoring = True
+        try:
+            self._history_index += 1
+            self._apply_history_snapshot(self._history[self._history_index])
+        finally:
+            self._history_restoring = False
+        self._refresh_status("已重做")
+        self._log_state("redo")
 
     def edit_shortcuts(self) -> None:
-        self._log_api("edit_shortcuts.begin")
         dialog = ShortcutEditDialog(self.config, self)
         if dialog.exec():
             self._refresh_shortcuts()
-            self._log_api("edit_shortcuts.saved", {"shortcuts": self.config.shortcuts.__dict__})
-        else:
-            self._log_api("edit_shortcuts.cancelled")
 
     def _refresh_shortcuts(self) -> None:
-        self._log_api("refresh_shortcuts.begin", {"shortcuts": self.config.shortcuts.__dict__})
         for shortcut in self._shortcuts.values():
             shortcut.deleteLater()
         self._shortcuts.clear()
         handlers = {
+            "add_split_line": self._add_split_line_at_cursor,
+            "toggle_region": self._toggle_region,
+            "delete_split_line": self._delete_selected_line,
+            "undo": self._undo,
+            "redo": self._redo,
+            "move_line_up": lambda: self._move_selected_line(-1),
+            "move_line_down": lambda: self._move_selected_line(1),
+            "move_line_up_fast": lambda: self._move_selected_line(-10),
+            "move_line_down_fast": lambda: self._move_selected_line(10),
             "fit_window": self._fit_window,
             "zoom_100": self._original_size,
-            "toggle_region": self._toggle_region,
         }
         for name, handler in handlers.items():
             value = getattr(self.config.shortcuts, name).strip()
@@ -254,27 +332,53 @@ class MainWindow(QMainWindow):
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
             shortcut.activated.connect(handler)
             self._shortcuts[name] = shortcut
-        value = self.config.shortcuts.add_split_line.strip().upper()
-        key_map = {"S": Qt.Key.Key_S, "A": Qt.Key.Key_A, "D": Qt.Key.Key_D, "L": Qt.Key.Key_L, "X": Qt.Key.Key_X}
-        self.canvas.set_add_line_shortcut(key_map.get(value, Qt.Key.Key_S), Qt.KeyboardModifier.NoModifier)
-        self._log_api("refresh_shortcuts.end", {"registered": list(self._shortcuts)})
+
+    def _add_split_line_at_cursor(self) -> None:
+        if not self.state.image_path:
+            return
+        global_pos = QGuiApplication.cursor().pos()
+        pos = self.canvas.viewport().mapFromGlobal(global_pos)
+        if not self.canvas.viewport().rect().contains(pos):
+            return
+        self.canvas._create_line(round(self.canvas.image_point(pos).y()))
+
+    def _delete_selected_line(self) -> None:
+        self.canvas.delete_selected_line()
+
+    def _move_selected_line(self, delta: int) -> None:
+        self.canvas.move_selected_line(delta)
 
     def export_all(self) -> None:
-        self._log_api("export_all.begin", {"image_path": self.state.image_path})
         if not self.state.image_path:
-            self._log_api("export_all.ignored", {"reason": "no_image"})
             QMessageBox.information(self, "没有图片", "请先打开一张 PNG 图片。")
             return
         output_dir = QFileDialog.getExistingDirectory(self, "选择导出目录")
         if not output_dir:
-            self._log_api("export_all.cancelled")
             return
         try:
             outputs = export_regions(self.state, Path(output_dir))
         except Exception as exc:
-            self._log_api("export_all.failed", {"error": str(exc), "output_dir": output_dir})
             QMessageBox.critical(self, "导出失败", str(exc))
             return
-        self._log_api("export_all.success", {"count": len(outputs), "output_dir": output_dir})
-        self._log_state("export_completed")
         QMessageBox.information(self, "导出完成", f"已导出 {len(outputs)} 个区域。\n目录：{output_dir}")
+
+    def dragEnterEvent(self, event) -> None:
+        if self.state.image_path or not event.mimeData().hasUrls():
+            event.ignore()
+            return
+        if any(url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() == ".png"
+               for url in event.mimeData().urls()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:
+        if self.state.image_path or not event.mimeData().hasUrls():
+            event.ignore()
+            return
+        for url in event.mimeData().urls():
+            if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() == ".png":
+                self.open_image(url.toLocalFile())
+                event.acceptProposedAction()
+                return
+        event.ignore()
