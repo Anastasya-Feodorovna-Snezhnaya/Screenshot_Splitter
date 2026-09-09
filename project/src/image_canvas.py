@@ -47,6 +47,7 @@ class ImageCanvas(QAbstractScrollArea):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setBackgroundRole(QPalette.ColorRole.Dark)
         self.setViewport(_CanvasViewport(self))
+        self.viewport().installEventFilter(self)
         self._image: Optional[QImage] = None
         self._state: Optional[DocumentState] = None
         self.zoom = 1.0
@@ -58,6 +59,26 @@ class ImageCanvas(QAbstractScrollArea):
         self._line_drag_old_y: Optional[int] = None
         self._selected_line: Optional[int] = None
         self._paint_diagnostic_pending = False
+
+    def eventFilter(self, watched, event: QEvent) -> bool:
+        if watched is self.viewport():
+            event_type = event.type()
+            if event_type == QEvent.Type.MouseButtonPress:
+                mouse_event = event
+                self._log_interaction("viewport_mouse_press", mouse_event)
+                self._handle_mouse_press(mouse_event)
+                return True
+            if event_type == QEvent.Type.MouseMove:
+                mouse_event = event
+                self._log_interaction("viewport_mouse_move", mouse_event)
+                self._handle_mouse_move(mouse_event)
+                return True
+            if event_type == QEvent.Type.MouseButtonRelease:
+                mouse_event = event
+                self._log_interaction("viewport_mouse_release", mouse_event)
+                self._handle_mouse_release(mouse_event)
+                return True
+        return super().eventFilter(watched, event)
 
     def _logger(self):
         return getattr(self.window(), "logger", None)
