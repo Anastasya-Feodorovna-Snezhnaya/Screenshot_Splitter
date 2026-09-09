@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import fields
-from typing import Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox,
     QVBoxLayout
@@ -29,7 +26,7 @@ DISPLAY_NAMES = {
 
 
 class ShortcutEditDialog(QDialog):
-    """Secondary settings page for viewing and editing shortcuts."""
+    """快捷键查看和编辑对话框。"""
 
     def __init__(self, config: ConfigManager, parent=None) -> None:
         super().__init__(parent)
@@ -43,7 +40,6 @@ class ShortcutEditDialog(QDialog):
         for field in fields(ShortcutConfig):
             key = field.name
             edit = QLineEdit(getattr(config.shortcuts, key))
-            edit.setReadOnly(False)
             edit.setPlaceholderText("例如 Ctrl+Z、Space、S")
             self.edits[key] = edit
             form.addRow(DISPLAY_NAMES.get(key, key), edit)
