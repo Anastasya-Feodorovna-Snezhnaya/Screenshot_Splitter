@@ -81,8 +81,8 @@ class ImageCanvas(QAbstractScrollArea):
         height = max(1, round(self._image.height() * self.zoom))
         half_w = self.viewport().width() // 2
         half_h = self.viewport().height() // 2
-        self.horizontalScrollBar().setRange(-half_w, max(-half_w, width - half_w))
-        self.verticalScrollBar().setRange(-half_h, max(-half_h, height - half_h))
+        self.horizontalScrollBar().setRange(-half_w, width - half_w)
+        self.verticalScrollBar().setRange(-half_h, height - half_h)
         self.horizontalScrollBar().setPageStep(self.viewport().width())
         self.verticalScrollBar().setPageStep(self.viewport().height())
 
@@ -120,22 +120,23 @@ class ImageCanvas(QAbstractScrollArea):
         if not self._image:
             return False
 
-        modifiers = event.modifiers()
-        if modifiers & Qt.KeyboardModifier.AltModifier:
-            delta = event.angleDelta().y()
-            if delta == 0:
-                delta = event.pixelDelta().y()
+        delta = event.angleDelta().y()
+        if delta == 0:
+            delta = event.pixelDelta().y()
+
+        # Alt+滚轮直接改变预览缩放比例，并以鼠标位置为缩放锚点。
+        if event.modifiers() & Qt.KeyboardModifier.AltModifier:
             if delta != 0:
-                anchor = event.position()
+                anchor = QPointF(event.position())
                 image_anchor = self.image_point(anchor)
-                factor = 1.1 if delta > 0 else 1.0 / 1.1
+                factor = 1.1 ** (delta / 120.0)
                 self._set_zoom(self.zoom * factor, anchor, image_anchor)
             event.accept()
             return True
 
-        delta = event.angleDelta()
-        self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
-        self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+        scroll_delta = event.angleDelta()
+        self.verticalScrollBar().setValue(self.verticalScrollBar().value() - scroll_delta.y())
+        self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - scroll_delta.x())
         event.accept()
         return True
 
@@ -297,11 +298,15 @@ class ImageCanvas(QAbstractScrollArea):
     def _set_zoom(self, zoom: float, viewport_anchor: QPointF, image_anchor: QPointF) -> None:
         if not self._image:
             return
-        zoom = max(0.05, min(8.0, zoom))
-        self.zoom = zoom
+        new_zoom = max(0.05, min(8.0, zoom))
+        if abs(new_zoom - self.zoom) < 1e-9:
+            return
+        self.zoom = new_zoom
         self._update_scrollbars()
-        target_x = round(image_anchor.x() * zoom - viewport_anchor.x())
-        target_y = round(image_anchor.y() * zoom - viewport_anchor.y())
+
+        # 根据缩放前记录的原图锚点重新计算滚动位置，保证锚点仍位于鼠标下方。
+        target_x = round(image_anchor.x() * self.zoom - viewport_anchor.x())
+        target_y = round(image_anchor.y() * self.zoom - viewport_anchor.y())
         self.horizontalScrollBar().setValue(target_x)
         self.verticalScrollBar().setValue(target_y)
         self.viewport().update()
@@ -337,7 +342,6 @@ class ImageCanvas(QAbstractScrollArea):
         target.translate(left, top_offset)
         painter.drawImage(target, self._image)
 
-        # 删除区域使用半透明遮罩，透明度可由工具栏设置。
         if self.mask_opacity > 0:
             mask = self.palette().mid().color()
             mask.setAlpha(round(255 * self.mask_opacity / 100))
@@ -347,14 +351,12 @@ class ImageCanvas(QAbstractScrollArea):
                     region_bottom = round(region.bottom * self.zoom) + top_offset
                     painter.fillRect(left, region_top, image_width, region_bottom - region_top, mask)
 
-        # 分割线与图片使用相同的 X/Y 坐标变换。
         for i, y in enumerate(self._state.normalized_lines()):
             screen_y = round(y * self.zoom) + top_offset
             pen = QPen(self.palette().highlight(), 2 if i == self._selected_line else 1)
             painter.setPen(pen)
             painter.drawLine(left, screen_y, left + image_width, screen_y)
 
-        # 当前选中区域的边框跟随图片位置移动。
         if self._selected_region is not None:
             regions = self._state.regions()
             if 0 <= self._selected_region < len(regions):
