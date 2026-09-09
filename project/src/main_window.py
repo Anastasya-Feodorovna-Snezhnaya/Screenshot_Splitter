@@ -54,7 +54,6 @@ class MainWindow(QMainWindow):
         if self.config.window.fullscreen:
             self.showFullScreen()
             return
-
         saved = QRect(self.config.window.x, self.config.window.y, width, height)
         screens = QGuiApplication.screens()
         if self.config.window.x < 0 or self.config.window.y < 0 or not any(
@@ -143,6 +142,20 @@ class MainWindow(QMainWindow):
         self.canvas.splitLineMoveFinished.connect(self._on_split_line_move_finished)
         self.canvas.splitLineDeleted.connect(self._on_split_line_deleted)
 
+    def _refresh_status(self, message: str | None = None) -> None:
+        if not self.state.image_path:
+            self.status.setText(message or "未打开图片")
+            return
+        regions = self.state.regions()
+        kept = sum(region.keep for region in regions)
+        deleted = len(regions) - kept
+        zoom_percent = self.canvas.zoom * 100
+        prefix = message or "就绪"
+        self.status.setText(
+            f"{prefix}    区域：{len(regions)}  保留：{kept}  删除：{deleted}  "
+            f"分割线：{len(self.state.normalized_lines())}  缩放：{zoom_percent:.1f}%"
+        )
+
     def open_image(self, path: str | None = None) -> None:
         if path is None:
             path, _ = QFileDialog.getOpenFileName(self, "选择 PNG 长截图", "", "PNG 图片 (*.png)")
@@ -162,6 +175,7 @@ class MainWindow(QMainWindow):
         self.canvas.fit_to_window()
         self._reset_history()
         self._refresh_status()
+        self._log_state("image_opened")
 
     def _fit_window(self) -> None:
         self.canvas.fit_to_window()
@@ -201,10 +215,7 @@ class MainWindow(QMainWindow):
         self._refresh_status(f"遮罩透明度：{value}%")
 
     def _toggle_region(self) -> None:
-        """Space 触发时只读取一次当前鼠标位置，不追踪鼠标移动。"""
-        if not self.state.image_path:
-            return
-        if QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+        if not self.state.image_path or QApplication.mouseButtons() != Qt.MouseButton.NoButton:
             return
         global_pos = QCursor.pos()
         viewport_pos = self.canvas.viewport().mapFromGlobal(global_pos)

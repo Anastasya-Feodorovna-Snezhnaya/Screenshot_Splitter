@@ -3,16 +3,22 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QPen, QPalette, QGuiApplication, QWheelEvent, QMouseEvent
+from PySide6.QtGui import QImage, QPainter, QPen, QPalette, QGuiApplication, QWheelEvent, QMouseEvent, QPaintEvent
 from PySide6.QtWidgets import QAbstractScrollArea, QWidget
 
 from .model import DocumentState, SplitLine
 
 
 class _CanvasViewport(QWidget):
+    """专门接收画布显示和鼠标/滚轮事件的视口控件。"""
+
     def __init__(self, canvas: "ImageCanvas") -> None:
         super().__init__(canvas)
         self.canvas = canvas
+        self.setMouseTracking(True)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        self.canvas._paint_viewport(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         self.canvas._handle_wheel_event(event)
@@ -54,6 +60,7 @@ class ImageCanvas(QAbstractScrollArea):
         self._selected_line: Optional[int] = None
 
     def set_document(self, image: QImage, state: DocumentState) -> None:
+        self._stop_pan()
         self._image = image
         self._state = state
         self.zoom = 1.0
@@ -89,6 +96,8 @@ class ImageCanvas(QAbstractScrollArea):
         self.verticalScrollBar().setRange(-half_h, height - half_h)
         self.horizontalScrollBar().setPageStep(self.viewport().width())
         self.verticalScrollBar().setPageStep(self.viewport().height())
+        self.horizontalScrollBar().setSingleStep(20)
+        self.verticalScrollBar().setSingleStep(20)
 
     def center_image(self) -> None:
         if not self._image:
@@ -107,29 +116,41 @@ class ImageCanvas(QAbstractScrollArea):
         self.verticalScrollBar().setValue(old_v)
         super().resizeEvent(event)
 
-    def _handle_wheel_event(self, event: QWheelEvent) -> bool:
+    def _handle_wheel_event(self, event: QWheelEvent) -> None:
+        """Alt+滚轮缩放；普通滚轮明确不执行任何操作。"""
         if not self._image:
             event.ignore()
-            return False
-        modifiers = event.modifiers() | QGuiApplication.keyboardModifiers()
+            return
+        modifiers = event.modifiers()
         if modifiers & Qt.KeyboardModifier.AltModifier:
-            delta = event.angleDelta().y() or event.angleDelta().x() or event.pixelDelta().y() or event.pixelDelta().x()
+            delta = event.angleDelta().y()
+            if delta == 0:
+                delta = event.angleDelta().x()
+            if delta == 0:
+                delta = event.pixelDelta().y()
+            if delta == 0:
+                delta = event.pixelDelta().x()
             if delta:
-                anchor = QPointF(event.position())
-                self._set_zoom(self.zoom * (1.1 ** (delta / 120.0)), anchor, self.image_point(anchor))
+                viewport_anchor = QPointF(event.position())
+                image_anchor = self.image_point(viewport_anchor)
+                self._set_zoom(
+                    self.zoom * (1.1 ** (delta / 120.0)),
+                    viewport_anchor,
+                    image_anchor,
+                )
             event.accept()
-            return True
+            return
         event.accept()
-        return True
 
-    def _handle_mouse_press(self, event: QMouseEvent) -> bool:
+    def _handle_mouse_press(self, event: QMouseEvent) -> None:
         if not self._image or not self._state:
-            return False
+            event.ignore()
+            return
         self.setFocus(Qt.FocusReason.MouseFocusReason)
         if event.button() == Qt.MouseButton.MiddleButton:
             self._start_pan(event)
             event.accept()
-            return True
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             image_point = self.image_point(event.position())
             line_index = self._hit_line(image_point.y())
@@ -143,30 +164,31 @@ class ImageCanvas(QAbstractScrollArea):
                 self._start_pan(event)
             self.viewport().update()
             event.accept()
-            return True
-        return False
+            return
+        event.ignore()
 
-    def _handle_mouse_move(self, event: QMouseEvent) -> bool:
+    def _handle_mouse_move(self, event: QMouseEvent) -> None:
         if not self._image or not self._state:
-            return False
+            event.ignore()
+            return
         if self._line_drag_index is not None:
             self._move_line(self._line_drag_index, round(self.image_point(event.position()).y()))
             event.accept()
-            return True
+            return
         if self._pan_active:
             delta = event.position() - self._pan_last
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(delta.x()))
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - round(delta.y()))
             self._pan_last = event.position()
             event.accept()
-            return True
-        return False
+            return
+        event.ignore()
 
-    def _handle_mouse_release(self, event: QMouseEvent) -> bool:
+    def _handle_mouse_release(self, event: QMouseEvent) -> None:
         if event.button() == self._pan_button:
             self._stop_pan()
             event.accept()
-            return True
+            return
         if event.button() == Qt.MouseButton.LeftButton and self._line_drag_index is not None:
             old_y = self._line_drag_old_y
             new_y = self._state.normalized_lines()[self._line_drag_index] if self._state else old_y
@@ -175,8 +197,8 @@ class ImageCanvas(QAbstractScrollArea):
             if old_y is not None and new_y is not None:
                 self.splitLineMoveFinished.emit(old_y, new_y)
             event.accept()
-            return True
-        return False
+            return
+        event.ignore()
 
     def _start_pan(self, event: QMouseEvent) -> None:
         self._pan_active = True
@@ -282,11 +304,12 @@ class ImageCanvas(QAbstractScrollArea):
         self._update_scrollbars()
         self.center_image()
 
-    def paintEvent(self, event) -> None:
+    def _paint_viewport(self, event: QPaintEvent) -> None:
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         painter.fillRect(self.viewport().rect(), self.palette().dark())
         if not self._image or not self._state:
+            painter.end()
             return
         image_width = round(self._image.width() * self.zoom)
         image_height = round(self._image.height() * self.zoom)
@@ -309,3 +332,8 @@ class ImageCanvas(QAbstractScrollArea):
             screen_y = round(y * self.zoom) + top_offset
             painter.setPen(QPen(self.palette().highlight(), 2 if i == self._selected_line else 1))
             painter.drawLine(left, screen_y, left + image_width, screen_y)
+        painter.end()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        # QAbstractScrollArea 本身不负责绘制图片，图片由 viewport.paintEvent 绘制。
+        super().paintEvent(event)
