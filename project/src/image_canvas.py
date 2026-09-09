@@ -28,6 +28,7 @@ class ImageCanvas(QAbstractScrollArea):
         self._image: Optional[QImage] = None
         self._state: Optional[DocumentState] = None
         self.zoom = 1.0
+        self.mask_opacity = 55
 
         self._pan_active = False
         self._pan_last = QPointF()
@@ -53,6 +54,11 @@ class ImageCanvas(QAbstractScrollArea):
         self._add_line_key = key
         self._add_line_modifier = modifier
 
+    def set_mask_opacity(self, opacity: int) -> None:
+        """设置删除区域遮罩透明度，范围为 0~100%。"""
+        self.mask_opacity = max(0, min(100, int(opacity)))
+        self.viewport().update()
+
     def image_point(self, pos: QPointF) -> QPointF:
         """把预览区域坐标转换为原图像素坐标。"""
         x = (pos.x() + self.horizontalScrollBar().value()) / self.zoom
@@ -73,8 +79,6 @@ class ImageCanvas(QAbstractScrollArea):
 
         width = max(1, round(self._image.width() * self.zoom))
         height = max(1, round(self._image.height() * self.zoom))
-
-        # 允许滚动条取负值，使小于视口的图片也能保持居中并进行整体平移。
         half_w = self.viewport().width() // 2
         half_h = self.viewport().height() // 2
         self.horizontalScrollBar().setRange(-half_w, max(-half_w, width - half_w))
@@ -116,7 +120,8 @@ class ImageCanvas(QAbstractScrollArea):
         if not self._image:
             return False
 
-        if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.AltModifier:
             delta = event.angleDelta().y()
             if delta == 0:
                 delta = event.pixelDelta().y()
@@ -137,7 +142,6 @@ class ImageCanvas(QAbstractScrollArea):
     def _handle_mouse_press(self, event) -> bool:
         if not self._image or not self._state:
             return False
-
         self.setFocus(Qt.FocusReason.MouseFocusReason)
 
         if event.button() == Qt.MouseButton.MiddleButton:
@@ -146,34 +150,30 @@ class ImageCanvas(QAbstractScrollArea):
             return True
 
         if event.button() == Qt.MouseButton.LeftButton:
-            image_y = self.image_point(event.position()).y()
-            line_index = self._hit_line(image_y)
+            image_point = self.image_point(event.position())
+            line_index = self._hit_line(image_point.y())
             if line_index is not None:
                 self._selected_line = line_index
                 self._line_drag_index = line_index
                 self.splitLineSelected.emit(line_index)
             else:
                 self._selected_line = None
-                self._selected_region = self._region_at_y(int(image_y))
+                self._selected_region = self._region_at_y(int(image_point.y()))
                 if self._selected_region is not None:
                     self.regionSelected.emit(self._selected_region)
                 self._start_pan(event)
             self.viewport().update()
             event.accept()
             return True
-
         return False
 
     def _handle_mouse_move(self, event) -> bool:
         if not self._image or not self._state:
             return False
-
         if self._line_drag_index is not None:
-            y = round(self.image_point(event.position()).y())
-            self._move_line(self._line_drag_index, y)
+            self._move_line(self._line_drag_index, round(self.image_point(event.position()).y()))
             event.accept()
             return True
-
         if self._pan_active:
             delta = event.position() - self._pan_last
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(delta.x()))
@@ -181,7 +181,6 @@ class ImageCanvas(QAbstractScrollArea):
             self._pan_last = event.position()
             event.accept()
             return True
-
         return False
 
     def _handle_mouse_release(self, event) -> bool:
@@ -189,7 +188,6 @@ class ImageCanvas(QAbstractScrollArea):
             self._stop_pan()
             event.accept()
             return True
-
         if event.button() == Qt.MouseButton.LeftButton:
             self._line_drag_index = None
         return False
@@ -209,13 +207,11 @@ class ImageCanvas(QAbstractScrollArea):
     def keyPressEvent(self, event) -> None:
         if not self._state:
             return super().keyPressEvent(event)
-
         if event.key() == self._add_line_key and event.modifiers() == self._add_line_modifier:
             y = round(self.image_point(self.mapFromGlobal(self.cursor().pos())).y())
             self._create_line(y)
             event.accept()
             return
-
         if self._selected_line is not None:
             if event.key() == Qt.Key.Key_Up:
                 step = 10 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
@@ -235,7 +231,6 @@ class ImageCanvas(QAbstractScrollArea):
                 self.viewport().update()
                 event.accept()
                 return
-
         super().keyPressEvent(event)
 
     def _start_pan(self, event) -> None:
@@ -317,9 +312,7 @@ class ImageCanvas(QAbstractScrollArea):
         self._set_zoom(zoom, center, anchor)
 
     def fit_to_window(self) -> None:
-        if not self._image:
-            return
-        if self._image.width() == 0 or self._image.height() == 0:
+        if not self._image or self._image.width() == 0 or self._image.height() == 0:
             return
         zx = self.viewport().width() / self._image.width()
         zy = self.viewport().height() / self._image.height()
@@ -331,43 +324,42 @@ class ImageCanvas(QAbstractScrollArea):
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         painter.fillRect(self.viewport().rect(), self.palette().dark())
-
         if not self._image or not self._state:
             return
 
-        image_rect = self._image.rect()
-        target = image_rect
-        target.setWidth(round(image_rect.width() * self.zoom))
-        target.setHeight(round(image_rect.height() * self.zoom))
-        target.translate(-self.horizontalScrollBar().value(), -self.verticalScrollBar().value())
+        image_width = round(self._image.width() * self.zoom)
+        image_height = round(self._image.height() * self.zoom)
+        left = -self.horizontalScrollBar().value()
+        top_offset = -self.verticalScrollBar().value()
+        target = self._image.rect()
+        target.setWidth(image_width)
+        target.setHeight(image_height)
+        target.translate(left, top_offset)
         painter.drawImage(target, self._image)
 
-        # 删除区域只作为预览层显示，并使用与图片相同的坐标变换，因此会随图片移动。
-        for region in self._state.regions():
-            if not region.keep:
-                left = -self.horizontalScrollBar().value()
-                top = round(region.top * self.zoom) - self.verticalScrollBar().value()
-                width = round(self._image.width() * self.zoom)
-                bottom = round(region.bottom * self.zoom) - self.verticalScrollBar().value()
-                painter.fillRect(left, top, width, bottom - top, self.palette().mid())
+        # 删除区域使用半透明遮罩，透明度可由工具栏设置。
+        if self.mask_opacity > 0:
+            mask = self.palette().mid().color()
+            mask.setAlpha(round(255 * self.mask_opacity / 100))
+            for region in self._state.regions():
+                if not region.keep:
+                    region_top = round(region.top * self.zoom) + top_offset
+                    region_bottom = round(region.bottom * self.zoom) + top_offset
+                    painter.fillRect(left, region_top, image_width, region_bottom - region_top, mask)
 
         # 分割线与图片使用相同的 X/Y 坐标变换。
         for i, y in enumerate(self._state.normalized_lines()):
-            screen_y = round(y * self.zoom) - self.verticalScrollBar().value()
-            left = -self.horizontalScrollBar().value()
-            right = left + round(self._image.width() * self.zoom)
+            screen_y = round(y * self.zoom) + top_offset
             pen = QPen(self.palette().highlight(), 2 if i == self._selected_line else 1)
             painter.setPen(pen)
-            painter.drawLine(left, screen_y, right, screen_y)
+            painter.drawLine(left, screen_y, left + image_width, screen_y)
 
-        # 当前选中区域的边框跟随图片位置移动，而不是固定绘制在视口左侧。
+        # 当前选中区域的边框跟随图片位置移动。
         if self._selected_region is not None:
             regions = self._state.regions()
             if 0 <= self._selected_region < len(regions):
                 r = regions[self._selected_region]
-                left = -self.horizontalScrollBar().value()
-                top = round(r.top * self.zoom) - self.verticalScrollBar().value()
-                width = round(self._image.width() * self.zoom)
-                bottom = round(r.bottom * self.zoom) - self.verticalScrollBar().value()
+                region_top = round(r.top * self.zoom) + top_offset
+                region_bottom = round(r.bottom * self.zoom) + top_offset
                 painter.setPen(QPen(self.palette().highlight(), 1))
-                painter.drawRect(left, top, max(0, width - 1), max(0, bottom - top - 1))
+                painter.drawRect(left, region_top, max(0, image_width - 1), max(0, region_bottom - region_top - 1))
