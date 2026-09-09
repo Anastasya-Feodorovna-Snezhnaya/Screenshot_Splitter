@@ -5,10 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QAction, QCursor, QGuiApplication, QImage, QKeySequence, QShortcut
-from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout,
-    QWidget, QInputDialog, QLineEdit,
-)
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout, QWidget, QInputDialog, QLineEdit
 
 from .config import ConfigManager
 from .exporter import export_regions
@@ -19,8 +16,6 @@ from .shortcut_dialog import ShortcutEditDialog
 
 
 class MainWindow(QMainWindow):
-    """主编辑窗口。"""
-
     def __init__(self, config: ConfigManager, logger: DebugLogger | None = None) -> None:
         super().__init__()
         self.config = config
@@ -31,14 +26,11 @@ class MainWindow(QMainWindow):
         self._history: list[DocumentState] = []
         self._history_index = -1
         self._history_restoring = False
-
         self.setWindowTitle("Screenshot Splitter")
         self.setAcceptDrops(True)
         self.resize(1200, 800)
         self._restore_window_state()
-
         self.canvas = ImageCanvas(self)
-        self.canvas.logger = self.logger
         self.canvas.set_mask_opacity(self.config.preview.mask_opacity)
         self.status = QLabel("未打开图片")
         self._build_ui()
@@ -46,8 +38,7 @@ class MainWindow(QMainWindow):
         self._log_state("window_initialized")
 
     def _restore_window_state(self) -> None:
-        width = self.config.window.width
-        height = self.config.window.height
+        width, height = self.config.window.width, self.config.window.height
         if width < 200 or height < 150:
             width, height = 1200, 800
         self.resize(width, height)
@@ -56,51 +47,39 @@ class MainWindow(QMainWindow):
             return
         saved = QRect(self.config.window.x, self.config.window.y, width, height)
         screens = QGuiApplication.screens()
-        if self.config.window.x < 0 or self.config.window.y < 0 or not any(
-            saved.intersects(screen.availableGeometry()) for screen in screens
-        ):
+        if self.config.window.x < 0 or self.config.window.y < 0 or not any(saved.intersects(s.availableGeometry()) for s in screens):
             self._center_window()
         else:
             self.move(self.config.window.x, self.config.window.y)
 
     def _center_window(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()
-        if screen is None:
-            return
-        area = screen.availableGeometry()
-        self.move(
-            area.left() + (area.width() - self.width()) // 2,
-            area.top() + (area.height() - self.height()) // 2,
-        )
+        if screen:
+            area = screen.availableGeometry()
+            self.move(area.left() + (area.width() - self.width()) // 2, area.top() + (area.height() - self.height()) // 2)
 
     def _save_window_state(self) -> None:
         self.config.window.fullscreen = self.isFullScreen()
         if not self.isFullScreen():
-            self.config.window.x = self.x()
-            self.config.window.y = self.y()
-            self.config.window.width = self.width()
-            self.config.window.height = self.height()
+            self.config.window.x, self.config.window.y = self.x(), self.y()
+            self.config.window.width, self.config.window.height = self.width(), self.height()
         self.config.save()
 
     def closeEvent(self, event) -> None:
         self._save_window_state()
         super().closeEvent(event)
 
-    def _log_api(self, name: str, data: dict | None = None) -> None:
-        self.logger.api(name, data)
-
     def _log_state(self, name: str) -> None:
         if not self.logger.state_enabled:
             return
-        regions = self.state.regions()
         self.logger.state(name, {
             "image_path": self.state.image_path,
             "image_size": [self.state.image_width, self.state.image_height],
             "zoom": self.canvas.zoom,
             "selected_line": self.canvas._selected_line,
             "split_lines": self.state.normalized_lines(),
-            "deleted_regions": [list(item) for item in sorted(self.state.deleted_regions)],
-            "regions": [{"top": r.top, "bottom": r.bottom, "keep": r.keep} for r in regions],
+            "deleted_regions": [list(x) for x in sorted(self.state.deleted_regions)],
+            "regions": [{"top": r.top, "bottom": r.bottom, "keep": r.keep} for r in self.state.regions()],
             "mask_opacity": self.canvas.mask_opacity,
         })
 
@@ -109,27 +88,26 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
         open_action = QAction("打开", self)
-        open_action.triggered.connect(self.open_image)
+        open_action.triggered.connect(lambda _checked=False: self.open_image())
         toolbar.addAction(open_action)
         fit_action = QAction("适应窗口", self)
         fit_action.setToolTip("恢复为适应窗口并将图片整体居中")
         fit_action.triggered.connect(self._fit_window)
         toolbar.addAction(fit_action)
-        original_size_action = QAction("原始尺寸", self)
-        original_size_action.setToolTip("以原图 1:1 像素比例显示")
-        original_size_action.triggered.connect(self._original_size)
-        toolbar.addAction(original_size_action)
-        mask_action = QAction("遮罩设置", self)
-        mask_action.setToolTip("调整删除区域的预览遮罩透明度")
-        mask_action.triggered.connect(self.edit_mask_opacity)
-        toolbar.addAction(mask_action)
-        export_action = QAction("导出全部", self)
-        export_action.triggered.connect(self.export_all)
-        toolbar.addAction(export_action)
-        shortcut_action = QAction("设置快捷键", self)
-        shortcut_action.triggered.connect(self.edit_shortcuts)
-        toolbar.addAction(shortcut_action)
-
+        original = QAction("原始尺寸", self)
+        original.setToolTip("以原图 1:1 像素比例显示")
+        original.triggered.connect(self._original_size)
+        toolbar.addAction(original)
+        mask = QAction("遮罩设置", self)
+        mask.setToolTip("调整删除区域的预览遮罩透明度")
+        mask.triggered.connect(self.edit_mask_opacity)
+        toolbar.addAction(mask)
+        export = QAction("导出全部", self)
+        export.triggered.connect(self.export_all)
+        toolbar.addAction(export)
+        shortcuts = QAction("设置快捷键", self)
+        shortcuts.triggered.connect(self.edit_shortcuts)
+        toolbar.addAction(shortcuts)
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -147,14 +125,8 @@ class MainWindow(QMainWindow):
             self.status.setText(message or "未打开图片")
             return
         regions = self.state.regions()
-        kept = sum(region.keep for region in regions)
-        deleted = len(regions) - kept
-        zoom_percent = self.canvas.zoom * 100
-        prefix = message or "就绪"
-        self.status.setText(
-            f"{prefix}    区域：{len(regions)}  保留：{kept}  删除：{deleted}  "
-            f"分割线：{len(self.state.normalized_lines())}  缩放：{zoom_percent:.1f}%"
-        )
+        kept = sum(r.keep for r in regions)
+        self.status.setText(f"{message or '就绪'}    区域：{len(regions)}  保留：{kept}  删除：{len(regions)-kept}  分割线：{len(self.state.normalized_lines())}  缩放：{self.canvas.zoom*100:.1f}%")
 
     def open_image(self, path: str | None = None) -> None:
         if path is None:
@@ -166,11 +138,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "打开失败", "无法读取该 PNG 文件。")
             return
         self.source_image = image
-        self.state = DocumentState(
-            image_path=str(Path(path).resolve()),
-            image_width=image.width(),
-            image_height=image.height(),
-        )
+        self.state = DocumentState(image_path=str(Path(path).resolve()), image_width=image.width(), image_height=image.height())
         self.canvas.set_document(image, self.state)
         self.canvas.fit_to_window()
         self._reset_history()
@@ -194,13 +162,11 @@ class MainWindow(QMainWindow):
         dialog.setOkButtonText("确定")
         dialog.setCancelButtonText("取消")
         line_edit = dialog.findChild(QLineEdit)
-        if line_edit is not None:
+        if line_edit:
             line_edit.setPlaceholderText("例如：55 或 55%")
         if dialog.exec() != QInputDialog.DialogCode.Accepted:
             return
-        text = dialog.textValue().strip()
-        if text.endswith("%"):
-            text = text[:-1].strip()
+        text = dialog.textValue().strip().rstrip("%").strip()
         try:
             value = int(text)
         except ValueError:
@@ -217,25 +183,23 @@ class MainWindow(QMainWindow):
     def _toggle_region(self) -> None:
         if not self.state.image_path or QApplication.mouseButtons() != Qt.MouseButton.NoButton:
             return
-        global_pos = QCursor.pos()
-        viewport_pos = self.canvas.viewport().mapFromGlobal(global_pos)
-        if not self.canvas.viewport().rect().contains(viewport_pos):
+        pos = self.canvas.viewport().mapFromGlobal(QCursor.pos())
+        if not self.canvas.viewport().rect().contains(pos):
             return
-        image_point = self.canvas.image_point(viewport_pos)
-        if not (0 <= image_point.x() < self.state.image_width and 0 <= image_point.y() < self.state.image_height):
+        p = self.canvas.image_point(pos)
+        if not (0 <= p.x() < self.state.image_width and 0 <= p.y() < self.state.image_height):
             return
-        index = self.canvas._region_at_y(int(image_point.y()))
+        index = self.canvas._region_at_y(int(p.y()))
         regions = self.state.regions()
         if index is None or not 0 <= index < len(regions):
             return
         region = regions[index]
         key = (region.top, region.bottom)
-        if key in self.state.deleted_regions:
+        keep = key in self.state.deleted_regions
+        if keep:
             self.state.deleted_regions.remove(key)
-            keep = True
         else:
             self.state.deleted_regions.add(key)
-            keep = False
         self._record_history()
         self.canvas.viewport().update()
         self._refresh_status(f"区域 {index + 1}：{'保留' if keep else '删除'}")
@@ -281,23 +245,22 @@ class MainWindow(QMainWindow):
         snapshot = self._clone_state()
         if self._history and self._history[self._history_index] == snapshot:
             return
-        self._history = self._history[: self._history_index + 1]
+        self._history = self._history[:self._history_index + 1]
         self._history.append(snapshot)
         self._history_index += 1
 
     def _apply_history_snapshot(self, snapshot: DocumentState) -> None:
         zoom = self.canvas.zoom
-        horizontal = self.canvas.horizontalScrollBar().value()
-        vertical = self.canvas.verticalScrollBar().value()
-        selected_line = self.canvas._selected_line
+        h, v = self.canvas.horizontalScrollBar().value(), self.canvas.verticalScrollBar().value()
+        selected = self.canvas._selected_line
         self.state = deepcopy(snapshot)
         self.canvas.set_document(self.source_image, self.state)
         self.canvas.zoom = zoom
         self.canvas._update_scrollbars()
-        self.canvas.horizontalScrollBar().setValue(horizontal)
-        self.canvas.verticalScrollBar().setValue(vertical)
+        self.canvas.horizontalScrollBar().setValue(h)
+        self.canvas.verticalScrollBar().setValue(v)
         lines = self.state.normalized_lines()
-        self.canvas._selected_line = selected_line if selected_line is not None and selected_line < len(lines) else None
+        self.canvas._selected_line = selected if selected is not None and selected < len(lines) else None
         self.canvas.viewport().update()
 
     def _undo(self) -> None:
@@ -348,21 +311,18 @@ class MainWindow(QMainWindow):
         }
         for name, handler in handlers.items():
             value = getattr(self.config.shortcuts, name).strip()
-            if not value:
-                continue
-            shortcut = QShortcut(QKeySequence(value), self)
-            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-            shortcut.activated.connect(handler)
-            self._shortcuts[name] = shortcut
+            if value:
+                shortcut = QShortcut(QKeySequence(value), self)
+                shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+                shortcut.activated.connect(handler)
+                self._shortcuts[name] = shortcut
 
     def _add_split_line_at_cursor(self) -> None:
         if not self.state.image_path:
             return
-        global_pos = QCursor.pos()
-        pos = self.canvas.viewport().mapFromGlobal(global_pos)
-        if not self.canvas.viewport().rect().contains(pos):
-            return
-        self.canvas._create_line(round(self.canvas.image_point(pos).y()))
+        pos = self.canvas.viewport().mapFromGlobal(QCursor.pos())
+        if self.canvas.viewport().rect().contains(pos):
+            self.canvas._create_line(round(self.canvas.image_point(pos).y()))
 
     def _delete_selected_line(self) -> None:
         self.canvas.delete_selected_line()
@@ -394,8 +354,7 @@ class MainWindow(QMainWindow):
         if self.state.image_path or not event.mimeData().hasUrls():
             event.ignore()
             return
-        if any(url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() == ".png"
-               for url in event.mimeData().urls()):
+        if any(u.isLocalFile() and Path(u.toLocalFile()).suffix.lower() == ".png" for u in event.mimeData().urls()):
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -404,9 +363,9 @@ class MainWindow(QMainWindow):
         if self.state.image_path or not event.mimeData().hasUrls():
             event.ignore()
             return
-        for url in event.mimeData().urls():
-            if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() == ".png":
-                self.open_image(url.toLocalFile())
+        for u in event.mimeData().urls():
+            if u.isLocalFile() and Path(u.toLocalFile()).suffix.lower() == ".png":
+                self.open_image(u.toLocalFile())
                 event.acceptProposedAction()
                 return
         event.ignore()
