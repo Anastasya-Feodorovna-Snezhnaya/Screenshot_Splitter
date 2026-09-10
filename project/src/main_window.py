@@ -8,6 +8,7 @@ from PySide6.QtGui import QAction, QCursor, QGuiApplication, QImage, QKeySequenc
 from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout, QWidget, QInputDialog, QLineEdit
 
 from .config import ConfigManager
+from .export_conflicts import ExportCancelled
 from .exporter import export_regions
 from .image_canvas import ImageCanvas
 from .logger import DebugLogger
@@ -400,6 +401,8 @@ class MainWindow(QMainWindow):
                 outputs = export_regions(self.state, output_dir)
             else:
                 outputs = export_regions_named(self.state, output_dir, prefix, suffix)
+        except ExportCancelled:
+            return
         except Exception as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
             return
@@ -428,70 +431,18 @@ class MainWindow(QMainWindow):
         if self.state.image_path or not event.mimeData().hasUrls():
             event.ignore()
             return
-        if any(u.isLocalFile() and Path(u.toLocalFile()).suffix.lower() == ".png" for u in event.mimeData().urls()):
+        urls = event.mimeData().urls()
+        if len(urls) == 1 and urls[0].toLocalFile().lower().endswith(".png"):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event) -> None:
-        if self.state.image_path or not event.mimeData().hasUrls():
-            event.ignore()
-            return
-        for u in event.mimeData().urls():
-            if u.isLocalFile() and Path(u.toLocalFile()).suffix.lower() == ".png":
-                self.open_image(u.toLocalFile())
+        urls = event.mimeData().urls()
+        if len(urls) == 1:
+            path = urls[0].toLocalFile()
+            if path.lower().endswith(".png"):
+                self.open_image(path)
                 event.acceptProposedAction()
                 return
         event.ignore()
-
-
-# 在主窗口既有功能基础上追加“重置到初始化状态”和“设置”，避免改变已有控件的实现顺序。
-_original_build_ui = MainWindow._build_ui
-
-
-def _build_ui_with_settings(self: MainWindow) -> None:
-    _original_build_ui(self)
-    toolbar = self.findChildren(QToolBar)[0]
-    self._reset_action = QAction("重置", self)
-    self._reset_action.setToolTip("清除全部分割线和删除区域，恢复到刚打开图片时的编辑状态")
-    self._reset_action.setEnabled(bool(self.state.image_path))
-    self._reset_action.triggered.connect(self._reset_edit_state)
-    toolbar.insertAction(toolbar.actions()[-2], self._reset_action)
-    settings = QAction("设置", self)
-    settings.triggered.connect(self.edit_settings)
-    toolbar.addAction(settings)
-
-
-MainWindow._build_ui = _build_ui_with_settings
-
-_original_close_image = MainWindow.close_image
-
-
-def _close_image_with_reset_button(self: MainWindow) -> None:
-    _original_close_image(self)
-    if hasattr(self, "_reset_action"):
-        self._reset_action.setEnabled(False)
-
-
-MainWindow.close_image = _close_image_with_reset_button
-
-_original_open_image = MainWindow.open_image
-
-
-def _open_image_with_reset_button(self: MainWindow, path: str | None = None) -> None:
-    _original_open_image(self, path)
-    if hasattr(self, "_reset_action"):
-        self._reset_action.setEnabled(bool(self.state.image_path))
-
-
-MainWindow.open_image = _open_image_with_reset_button
-
-
-def _edit_settings(self: MainWindow) -> None:
-    from .settings_dialog import SettingsDialog
-    dialog = SettingsDialog(self.config, self)
-    if dialog.exec() == QDialog.DialogCode.Accepted:
-        self._refresh_status("设置已保存")
-
-
-MainWindow.edit_settings = _edit_settings
