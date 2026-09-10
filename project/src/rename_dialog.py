@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import re
+import sys
 
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QLabel, QMessageBox
 
+
+_main_window = sys.modules.get("src.main_window")
+if _main_window is not None:
+    _main_window.QDialog = QDialog
 
 _WINDOWS_INVALID_CHARS = re.compile(r'[<>:"/\\|?*]')
 _RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
