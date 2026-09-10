@@ -45,6 +45,18 @@ class RecentConfig:
     """最近使用的路径。"""
 
     last_open_directory: str = ""
+    last_export_directory: str = ""
+
+
+@dataclass
+class ExportConfig:
+    """导出相关配置。"""
+
+    output_directory: str = ""
+    delete_source_after_export: bool = False
+    use_default_naming: bool = True
+    custom_prefix: str = ""
+    custom_suffix: str = "(n)"
 
 
 class ConfigManager:
@@ -57,6 +69,7 @@ class ConfigManager:
         self.preview = PreviewConfig()
         self.window = WindowConfig()
         self.recent = RecentConfig()
+        self.export = ExportConfig()
 
     def load(self) -> None:
         if not self.path.exists():
@@ -84,15 +97,29 @@ class ConfigManager:
                     setattr(self.window, key, value)
 
             recent_data = data.get("recent", {})
-            last_open_directory = recent_data.get("last_open_directory", self.recent.last_open_directory)
-            if isinstance(last_open_directory, str):
-                self.recent.last_open_directory = last_open_directory
+            for key in ("last_open_directory", "last_export_directory"):
+                value = recent_data.get(key, getattr(self.recent, key))
+                if isinstance(value, str):
+                    setattr(self.recent, key, value)
+
+            export_data = data.get("export", {})
+            if isinstance(export_data.get("output_directory"), str):
+                self.export.output_directory = export_data["output_directory"]
+            if isinstance(export_data.get("delete_source_after_export"), bool):
+                self.export.delete_source_after_export = export_data["delete_source_after_export"]
+            if isinstance(export_data.get("use_default_naming"), bool):
+                self.export.use_default_naming = export_data["use_default_naming"]
+            if isinstance(export_data.get("custom_prefix"), str):
+                self.export.custom_prefix = export_data["custom_prefix"]
+            if isinstance(export_data.get("custom_suffix"), str) and export_data["custom_suffix"]:
+                self.export.custom_suffix = export_data["custom_suffix"]
         except (OSError, ValueError, TypeError):
             # 配置文件无效时恢复默认配置，不阻止程序启动。
             self.shortcuts = ShortcutConfig()
             self.preview = PreviewConfig()
             self.window = WindowConfig()
             self.recent = RecentConfig()
+            self.export = ExportConfig()
 
     def save(self) -> None:
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -101,6 +128,7 @@ class ConfigManager:
             "preview": asdict(self.preview),
             "window": asdict(self.window),
             "recent": asdict(self.recent),
+            "export": asdict(self.export),
         }
         self.path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
