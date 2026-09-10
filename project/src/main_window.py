@@ -26,6 +26,7 @@ class MainWindow(QMainWindow):
         self._history: list[DocumentState] = []
         self._history_index = -1
         self._history_restoring = False
+        self._close_image_action: QAction | None = None
         self.setWindowTitle("Screenshot Splitter")
         self.setAcceptDrops(True)
         self.resize(1200, 800)
@@ -91,6 +92,11 @@ class MainWindow(QMainWindow):
         open_action = QAction("打开", self)
         open_action.triggered.connect(lambda _checked=False: self.open_image())
         toolbar.addAction(open_action)
+        self._close_image_action = QAction("关闭图片", self)
+        self._close_image_action.setToolTip("关闭当前图片并放弃当前所有编辑状态")
+        self._close_image_action.setEnabled(False)
+        self._close_image_action.triggered.connect(self.close_image)
+        toolbar.addAction(self._close_image_action)
         fit_action = QAction("适应窗口", self)
         fit_action.setToolTip("恢复为适应窗口并将图片整体居中")
         fit_action.triggered.connect(self._fit_window)
@@ -131,20 +137,53 @@ class MainWindow(QMainWindow):
 
     def open_image(self, path: str | None = None) -> None:
         if path is None:
-            path, _ = QFileDialog.getOpenFileName(self, "选择 PNG 长截图", "", "PNG 图片 (*.png)")
+            last_directory = self.config.recent.last_open_directory
+            directory = last_directory if Path(last_directory).is_dir() else ""
+            path, _ = QFileDialog.getOpenFileName(self, "选择 PNG 长截图", directory, "PNG 图片 (*.png)")
         if not path:
             return
         image = QImage(path)
         if image.isNull():
             QMessageBox.critical(self, "打开失败", "无法读取该 PNG 文件。")
             return
+        resolved_path = Path(path).resolve()
+        self.config.recent.last_open_directory = str(resolved_path.parent)
+        self.config.save()
         self.source_image = image
-        self.state = DocumentState(image_path=str(Path(path).resolve()), image_width=image.width(), image_height=image.height())
+        self.state = DocumentState(image_path=str(resolved_path), image_width=image.width(), image_height=image.height())
         self.canvas.set_document(image, self.state)
         self.canvas.fit_to_window()
         self._reset_history()
         self._refresh_status()
+        if self._close_image_action is not None:
+            self._close_image_action.setEnabled(True)
         self._log_state("image_opened")
+
+    def close_image(self) -> None:
+        if not self.state.image_path:
+            return
+        self.source_image = QImage()
+        self.state = DocumentState()
+        self.canvas.set_document(self.source_image, self.state)
+        self._reset_history()
+        self._refresh_status("已关闭图片")
+        if self._close_image_action is not None:
+            self._close_image_action.setEnabled(False)
+        self._log_state("image_closed")
+
+    def _reset_edit_state(self) -> None:
+        if not self.state.image_path:
+            return
+        if not self.state.split_lines and not self.state.deleted_regions:
+            self._refresh_status("已恢复初始状态")
+            return
+        self.state.split_lines.clear()
+        self.state.deleted_regions.clear()
+        self.canvas._selected_line = None
+        self._record_history()
+        self.canvas.viewport().update()
+        self._refresh_status("已恢复初始状态")
+        self._log_state("edit_state_reset")
 
     def _fit_window(self) -> None:
         self.canvas.fit_to_window()
@@ -302,7 +341,7 @@ class MainWindow(QMainWindow):
             "toggle_region": self._toggle_region,
             "delete_split_line": self._delete_selected_line,
             "undo": self._undo,
-            "redo": self._redo,
+            "redo": self._reset_edit_state,
             "move_line_up": lambda: self._move_selected_line(-1),
             "move_line_down": lambda: self._move_selected_line(1),
             "move_line_up_fast": lambda: self._move_selected_line(-10),
