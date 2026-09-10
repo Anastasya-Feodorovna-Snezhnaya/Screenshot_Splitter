@@ -13,11 +13,12 @@ def export_regions(state: DocumentState, output_dir: Path) -> list[Path]:
     if not state.image_path:
         raise ValueError("未选择原图。")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     regions = [region for region in state.regions() if region.keep and region.height > 0]
     paths = [output_dir / f"{number:03d}.png" for number in range(1, len(regions) + 1)]
     replace_paths, skip_paths = resolve_conflicts(paths)
+    del replace_paths
+
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     with Image.open(state.image_path) as source:
         if source.width != state.image_width or source.height != state.image_height:
