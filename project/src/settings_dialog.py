@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit, QPushButton
+
+
+# main_window.py keeps the dialog dependency local; expose QDialog there when this module is loaded.
+_main_window = sys.modules.get("src.main_window")
+if _main_window is not None:
+    _main_window.QDialog = QDialog
 
 
 class SettingsDialog(QDialog):
