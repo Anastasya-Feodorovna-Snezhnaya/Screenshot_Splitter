@@ -16,8 +16,7 @@ DISPLAY_NAMES = {
     "toggle_region": "切换区域保留/删除",
     "delete_split_line": "删除选中分割线",
     "undo": "撤销",
-    # 保留 redo 配置键以兼容已有 settings.json；当前快捷键执行恢复初始编辑状态。
-    "redo": "恢复初始状态",
+    "redo": "重做",
     "move_line_up": "分割线向上 1px",
     "move_line_down": "分割线向下 1px",
     "move_line_up_fast": "分割线向上 10px",
