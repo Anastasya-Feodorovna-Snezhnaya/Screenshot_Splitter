@@ -40,6 +40,13 @@ class WindowConfig:
     height: int = 800
 
 
+@dataclass
+class RecentConfig:
+    """最近使用的路径。"""
+
+    last_open_directory: str = ""
+
+
 class ConfigManager:
     """负责应用配置的加载和持久化。"""
 
@@ -49,6 +56,7 @@ class ConfigManager:
         self.shortcuts = ShortcutConfig()
         self.preview = PreviewConfig()
         self.window = WindowConfig()
+        self.recent = RecentConfig()
 
     def load(self) -> None:
         if not self.path.exists():
@@ -74,11 +82,17 @@ class ConfigManager:
                 value = window_data.get(key)
                 if isinstance(value, int):
                     setattr(self.window, key, value)
+
+            recent_data = data.get("recent", {})
+            last_open_directory = recent_data.get("last_open_directory", self.recent.last_open_directory)
+            if isinstance(last_open_directory, str):
+                self.recent.last_open_directory = last_open_directory
         except (OSError, ValueError, TypeError):
             # 配置文件无效时恢复默认配置，不阻止程序启动。
             self.shortcuts = ShortcutConfig()
             self.preview = PreviewConfig()
             self.window = WindowConfig()
+            self.recent = RecentConfig()
 
     def save(self) -> None:
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -86,6 +100,7 @@ class ConfigManager:
             "shortcuts": asdict(self.shortcuts),
             "preview": asdict(self.preview),
             "window": asdict(self.window),
+            "recent": asdict(self.recent),
         }
         self.path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
