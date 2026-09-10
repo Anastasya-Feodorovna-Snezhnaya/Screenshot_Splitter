@@ -45,7 +45,6 @@ class RecentConfig:
     """最近使用的路径。"""
 
     last_open_directory: str = ""
-    last_export_directory: str = ""
 
 
 @dataclass
@@ -97,10 +96,9 @@ class ConfigManager:
                     setattr(self.window, key, value)
 
             recent_data = data.get("recent", {})
-            for key in ("last_open_directory", "last_export_directory"):
-                value = recent_data.get(key, getattr(self.recent, key))
-                if isinstance(value, str):
-                    setattr(self.recent, key, value)
+            last_open_directory = recent_data.get("last_open_directory", self.recent.last_open_directory)
+            if isinstance(last_open_directory, str):
+                self.recent.last_open_directory = last_open_directory
 
             export_data = data.get("export", {})
             if isinstance(export_data.get("output_directory"), str):
