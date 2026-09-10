@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QAction, QCursor, QGuiApplication, QImage, QKeySequence, QShortcut
-from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout, QWidget, QInputDialog, QLineEdit
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout, QWidget, QInputDialog, QLineEdit, QDialog
 
 from .config import ConfigManager
 from .export_conflicts import ExportCancelled
@@ -28,6 +28,7 @@ class MainWindow(QMainWindow):
         self._history_index = -1
         self._history_restoring = False
         self._close_image_action: QAction | None = None
+        self._reset_action: QAction | None = None
         self.setWindowTitle("Screenshot Splitter")
         self.setAcceptDrops(True)
         self.resize(1200, 800)
@@ -110,9 +111,17 @@ class MainWindow(QMainWindow):
         mask.setToolTip("调整删除区域的预览遮罩透明度")
         mask.triggered.connect(self.edit_mask_opacity)
         toolbar.addAction(mask)
+        self._reset_action = QAction("重置", self)
+        self._reset_action.setToolTip("清除全部分割线和删除区域，恢复到刚打开图片时的编辑状态")
+        self._reset_action.setEnabled(False)
+        self._reset_action.triggered.connect(self._reset_edit_state)
+        toolbar.addAction(self._reset_action)
         export = QAction("导出全部", self)
         export.triggered.connect(self.export_all)
         toolbar.addAction(export)
+        settings = QAction("设置", self)
+        settings.triggered.connect(self.edit_settings)
+        toolbar.addAction(settings)
         shortcuts = QAction("设置快捷键", self)
         shortcuts.triggered.connect(self.edit_shortcuts)
         toolbar.addAction(shortcuts)
@@ -158,6 +167,8 @@ class MainWindow(QMainWindow):
         self._refresh_status()
         if self._close_image_action is not None:
             self._close_image_action.setEnabled(True)
+        if self._reset_action is not None:
+            self._reset_action.setEnabled(True)
         self._log_state("image_opened")
 
     def close_image(self) -> None:
@@ -170,6 +181,8 @@ class MainWindow(QMainWindow):
         self._refresh_status("已关闭图片")
         if self._close_image_action is not None:
             self._close_image_action.setEnabled(False)
+        if self._reset_action is not None:
+            self._reset_action.setEnabled(False)
         self._log_state("image_closed")
 
     def _reset_edit_state(self) -> None:
@@ -327,6 +340,13 @@ class MainWindow(QMainWindow):
             self._history_restoring = False
         self._refresh_status("已重做")
         self._log_state("redo")
+
+    def edit_settings(self) -> None:
+        from .settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self.config, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._refresh_status("设置已保存")
 
     def edit_shortcuts(self) -> None:
         dialog = ShortcutEditDialog(self.config, self)
