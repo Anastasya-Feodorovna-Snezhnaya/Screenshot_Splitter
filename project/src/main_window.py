@@ -341,7 +341,7 @@ class MainWindow(QMainWindow):
             "toggle_region": self._toggle_region,
             "delete_split_line": self._delete_selected_line,
             "undo": self._undo,
-            "redo": self._reset_edit_state,
+            "redo": self._redo,
             "move_line_up": lambda: self._move_selected_line(-1),
             "move_line_down": lambda: self._move_selected_line(1),
             "move_line_up_fast": lambda: self._move_selected_line(-10),
@@ -380,15 +380,49 @@ class MainWindow(QMainWindow):
         if not self.state.image_path:
             QMessageBox.information(self, "没有图片", "请先打开一张 PNG 图片。")
             return
-        output_dir = QFileDialog.getExistingDirectory(self, "选择导出目录")
-        if not output_dir:
-            return
+        output_dir = Path(self.config.export.output_directory).expanduser() if self.config.export.output_directory else Path(self.state.image_path).parent
+        if not output_dir.is_dir():
+            output_dir = Path(self.state.image_path).parent
+
+        prefix = ""
+        suffix = None
+        if not self.config.export.use_default_naming:
+            from .custom_exporter import export_regions_named
+            from .rename_dialog import RenameDialog
+
+            dialog = RenameDialog(self.config.export.custom_prefix, self.config.export.custom_suffix, self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            prefix, suffix = dialog.prefix, dialog.suffix
+
         try:
-            outputs = export_regions(self.state, Path(output_dir))
+            if suffix is None:
+                outputs = export_regions(self.state, output_dir)
+            else:
+                outputs = export_regions_named(self.state, output_dir, prefix, suffix)
         except Exception as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
             return
-        QMessageBox.information(self, "导出完成", f"已导出 {len(outputs)} 个区域。\n目录：{output_dir}")
+
+        if suffix is not None:
+            self.config.export.custom_prefix = prefix
+            self.config.export.custom_suffix = suffix
+        self.config.save()
+
+        deleted = False
+        if self.config.export.delete_source_after_export:
+            from .file_utils import move_to_recycle_bin
+            try:
+                move_to_recycle_bin(Path(self.state.image_path))
+                deleted = True
+            except Exception as exc:
+                QMessageBox.warning(self, "原图处理失败", f"切片已经导出，但原图未能移至回收站。\n{exc}")
+
+        message = f"已导出 {len(outputs)} 个区域。\n目录：{output_dir}"
+        if deleted:
+            self.close_image()
+            message += "\n原图已移至回收站。"
+        QMessageBox.information(self, "导出完成", message)
 
     def dragEnterEvent(self, event) -> None:
         if self.state.image_path or not event.mimeData().hasUrls():
@@ -409,3 +443,55 @@ class MainWindow(QMainWindow):
                 event.acceptProposedAction()
                 return
         event.ignore()
+
+
+# 在主窗口既有功能基础上追加“重置到初始化状态”和“设置”，避免改变已有控件的实现顺序。
+_original_build_ui = MainWindow._build_ui
+
+
+def _build_ui_with_settings(self: MainWindow) -> None:
+    _original_build_ui(self)
+    toolbar = self.findChildren(QToolBar)[0]
+    self._reset_action = QAction("重置", self)
+    self._reset_action.setToolTip("清除全部分割线和删除区域，恢复到刚打开图片时的编辑状态")
+    self._reset_action.setEnabled(bool(self.state.image_path))
+    self._reset_action.triggered.connect(self._reset_edit_state)
+    toolbar.insertAction(toolbar.actions()[-2], self._reset_action)
+    settings = QAction("设置", self)
+    settings.triggered.connect(self.edit_settings)
+    toolbar.addAction(settings)
+
+
+MainWindow._build_ui = _build_ui_with_settings
+
+_original_close_image = MainWindow.close_image
+
+
+def _close_image_with_reset_button(self: MainWindow) -> None:
+    _original_close_image(self)
+    if hasattr(self, "_reset_action"):
+        self._reset_action.setEnabled(False)
+
+
+MainWindow.close_image = _close_image_with_reset_button
+
+_original_open_image = MainWindow.open_image
+
+
+def _open_image_with_reset_button(self: MainWindow, path: str | None = None) -> None:
+    _original_open_image(self, path)
+    if hasattr(self, "_reset_action"):
+        self._reset_action.setEnabled(bool(self.state.image_path))
+
+
+MainWindow.open_image = _open_image_with_reset_button
+
+
+def _edit_settings(self: MainWindow) -> None:
+    from .settings_dialog import SettingsDialog
+    dialog = SettingsDialog(self.config, self)
+    if dialog.exec() == QDialog.DialogCode.Accepted:
+        self._refresh_status("设置已保存")
+
+
+MainWindow.edit_settings = _edit_settings
