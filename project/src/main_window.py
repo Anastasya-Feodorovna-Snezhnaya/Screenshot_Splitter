@@ -418,9 +418,23 @@ class MainWindow(QMainWindow):
 
         try:
             if suffix is None:
-                outputs = export_regions(self.state, output_dir)
+                outputs = export_regions(
+                    self.state,
+                    output_dir,
+                    self.config.export.number_width_mode,
+                    self.config.export.number_width_extra,
+                    self.config.export.number_width_threshold,
+                )
             else:
-                outputs = export_regions_named(self.state, output_dir, prefix, suffix)
+                outputs = export_regions_named(
+                    self.state,
+                    output_dir,
+                    prefix,
+                    suffix,
+                    self.config.export.number_width_mode,
+                    self.config.export.number_width_extra,
+                    self.config.export.number_width_threshold,
+                )
         except ExportCancelled:
             return
         except Exception as exc:
