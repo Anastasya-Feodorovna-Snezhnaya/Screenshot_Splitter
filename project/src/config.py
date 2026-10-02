@@ -56,6 +56,9 @@ class ExportConfig:
     use_default_naming: bool = True
     custom_prefix: str = ""
     custom_suffix: str = "(n)"
+    number_width_mode: str = "fixed"
+    number_width_extra: int = 0
+    number_width_threshold: int = 100
 
 
 class ConfigManager:
@@ -111,6 +114,14 @@ class ConfigManager:
                 self.export.custom_prefix = export_data["custom_prefix"]
             if isinstance(export_data.get("custom_suffix"), str) and export_data["custom_suffix"]:
                 self.export.custom_suffix = export_data["custom_suffix"]
+            if export_data.get("number_width_mode") in {"fixed", "threshold"}:
+                self.export.number_width_mode = export_data["number_width_mode"]
+            extra = export_data.get("number_width_extra", self.export.number_width_extra)
+            if isinstance(extra, int) and 0 <= extra <= 5:
+                self.export.number_width_extra = extra
+            threshold = export_data.get("number_width_threshold", self.export.number_width_threshold)
+            if isinstance(threshold, int) and 0 <= threshold <= 100:
+                self.export.number_width_threshold = threshold
         except (OSError, ValueError, TypeError):
             # 配置文件无效时恢复默认配置，不阻止程序启动。
             self.shortcuts = ShortcutConfig()
