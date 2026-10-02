@@ -6,15 +6,17 @@ from PIL import Image
 
 from .export_conflicts import resolve_conflicts
 from .model import DocumentState
+from .export_naming import format_number, number_width
 
 
-def export_regions_named(state: DocumentState, output_dir: Path, prefix: str, suffix: str) -> list[Path]:
+def export_regions_named(state: DocumentState, output_dir: Path, prefix: str, suffix: str, number_mode: str = "fixed", number_extra: int = 0, number_threshold: int = 100) -> list[Path]:
     """使用用户指定的前缀和包含 n 的后缀导出保留区域。"""
     if not state.image_path:
         raise ValueError("未选择原图。")
 
     regions = [region for region in state.regions() if region.keep and region.height > 0]
-    paths = [output_dir / f"{prefix}{suffix.replace('n', str(number))}.png" for number in range(1, len(regions) + 1)]
+    width = number_width(len(regions), number_mode, number_extra, number_threshold)
+    paths = [output_dir / f"{prefix}{suffix.replace('n', format_number(number, width))}.png" for number in range(1, len(regions) + 1)]
     replace_paths, skip_paths = resolve_conflicts(paths)
     del replace_paths
 
@@ -26,7 +28,7 @@ def export_regions_named(state: DocumentState, output_dir: Path, prefix: str, su
 
         outputs: list[Path] = []
         for number, region in enumerate(regions, 1):
-            path = output_dir / f"{prefix}{suffix.replace('n', str(number))}.png"
+            path = output_dir / f"{prefix}{suffix.replace('n', format_number(number, width))}.png"
             if path in skip_paths:
                 continue
             crop = source.crop((0, region.top, source.width, region.bottom))
