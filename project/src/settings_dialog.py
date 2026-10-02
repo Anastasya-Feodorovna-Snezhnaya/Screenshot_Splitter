@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QLocale
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -60,12 +61,14 @@ class SettingsDialog(QDialog):
         self.mode_group.addButton(self.threshold_radio)
 
         self.extra_spin = QSpinBox(self)
+        self.extra_spin.setLocale(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
         self.extra_spin.setRange(0, 5)
         self.extra_spin.setValue(config.export.number_width_extra)
         self.extra_spin.setSuffix(" 位")
         self.extra_spin.setToolTip("在表示全部导出切片所需的最少位数基础上，再增加 0~5 位。")
 
         self.threshold_spin = QSpinBox(self)
+        self.threshold_spin.setLocale(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
         self.threshold_spin.setRange(0, 100)
         self.threshold_spin.setValue(config.export.number_width_threshold)
         self.threshold_spin.setSuffix(" %")
