@@ -59,6 +59,8 @@ class ExportConfig:
     number_width_mode: str = "fixed"
     number_width_extra: int = 0
     number_width_threshold: int = 100
+    rename_dialog_width: int = 520
+    rename_dialog_height: int = 180
 
 
 class ConfigManager:
@@ -122,6 +124,13 @@ class ConfigManager:
             threshold = export_data.get("number_width_threshold", self.export.number_width_threshold)
             if isinstance(threshold, int) and 0 <= threshold <= 100:
                 self.export.number_width_threshold = threshold
+
+            dialog_width = export_data.get("rename_dialog_width", self.export.rename_dialog_width)
+            if isinstance(dialog_width, int) and 300 <= dialog_width <= 10000:
+                self.export.rename_dialog_width = dialog_width
+            dialog_height = export_data.get("rename_dialog_height", self.export.rename_dialog_height)
+            if isinstance(dialog_height, int) and 120 <= dialog_height <= 10000:
+                self.export.rename_dialog_height = dialog_height
         except (OSError, ValueError, TypeError):
             # 配置文件无效时恢复默认配置，不阻止程序启动。
             self.shortcuts = ShortcutConfig()
