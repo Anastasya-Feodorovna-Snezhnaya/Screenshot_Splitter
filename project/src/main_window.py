@@ -412,7 +412,19 @@ class MainWindow(QMainWindow):
             from .rename_dialog import RenameDialog
 
             dialog = RenameDialog(self.config.export.custom_prefix, self.config.export.custom_suffix, self)
-            if dialog.exec() != QDialog.DialogCode.Accepted:
+            dialog.resize(
+                self.config.export.rename_dialog_width,
+                self.config.export.rename_dialog_height,
+            )
+            dialog_result = dialog.exec()
+
+            # 无论用户确认还是取消，都记忆本次对话框的窗口尺寸。
+            dialog_size = dialog.size()
+            self.config.export.rename_dialog_width = dialog_size.width()
+            self.config.export.rename_dialog_height = dialog_size.height()
+            self.config.save()
+
+            if dialog_result != QDialog.DialogCode.Accepted:
                 return
             prefix, suffix = dialog.prefix, dialog.suffix
 
